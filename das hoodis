@@ -1,5 +1,5 @@
 local KraviX = loadstring(game:HttpGet(
-    "https://raw.githubusercontent.com/sixsdev/KraviX/refs/heads/main/new%20ui"
+    "https://raw.githubusercontent.com/sixsdev/KraviX/refs/heads/main/new%20ui%20desing"
 ))()
 
 local Players          = game:GetService("Players")
