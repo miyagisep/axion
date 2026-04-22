@@ -379,11 +379,12 @@ UserInputService.InputEnded:Connect(function(i)
 end)
 
 
-RunService.RenderStepped:Connect(function()
-    local char = LocalPlayer.Character
-    local hum  = char and char:FindFirstChildOfClass("Humanoid")
-    if not hum then return end
-    hum.WalkSpeed = (SpeedSettings.Enabled and SpeedSettings.KeybindActive) and SpeedSettings.Value or 16
+RunService.Heartbeat:Connect(function()
+    if SpeedSettings.Enabled and SpeedSettings.KeybindActive then
+        local char = LocalPlayer.Character
+        local hum  = char and char:FindFirstChildOfClass("Humanoid")
+        if hum then hum.WalkSpeed = SpeedSettings.Value end
+    end
 end)
 
 
@@ -1077,3 +1078,5 @@ secUtil:AddButton({Name="Rejoin Server",Callback=function()
     if game.JobId~="" then TeleportService:TeleportToPlaceInstance(game.PlaceId,game.JobId,lp)
     else TeleportService:Teleport(game.PlaceId,lp) end
 end})
+
+-- by kravix
