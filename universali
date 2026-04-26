@@ -1,0 +1,711 @@
+
+    local KraviX = loadstring(game:HttpGet(
+        "https://raw.githubusercontent.com/sixsdev/KraviX/refs/heads/main/new%20ui%20desing"
+    ))()
+
+    local Players          = game:GetService("Players")
+    local RunService       = game:GetService("RunService")
+    local UserInputService = game:GetService("UserInputService")
+    local Lighting         = game:GetService("Lighting")
+    local LocalPlayer      = Players.LocalPlayer
+    local Camera           = workspace.CurrentCamera
+
+    local _hidden = false
+
+    
+    local function matchesBind(inp, bind)
+        if not bind then return false end
+        if bind.type == "mouse" then return inp.UserInputType == bind.value end
+        if bind.type == "key" then
+            return inp.UserInputType == Enum.UserInputType.Keyboard and inp.KeyCode == bind.value
+        end
+        return false
+    end
+
+    local function matchesMenuBind(inp, bind)
+        if not bind or bind.type ~= "key" then return false end
+        if inp.UserInputType ~= Enum.UserInputType.Keyboard then return false end
+        if bind.value == Enum.KeyCode.Unknown then return false end
+        return inp.KeyCode == bind.value
+    end
+
+    local function getChar() return LocalPlayer.Character end
+    local function getHum()
+        local c = getChar(); return c and c:FindFirstChildOfClass("Humanoid")
+    end
+    local function getHRP()
+        local c = getChar(); return c and c:FindFirstChild("HumanoidRootPart")
+    end
+
+    
+    local PlayerSettings = {
+        Gravity        = 196.2,
+        Fullbright     = false,
+        RemoveShadows  = false,
+        RemoveFog      = false,
+        InfiniteJump   = false,
+        Fly            = false, FlyActive    = false,
+        FlySpeed       = 50,
+        NoClip         = false,
+        Speed          = false, SpeedActive  = false,
+        SpeedValue     = 16,
+        JumpBoost      = false, JumpActive   = false,
+        JumpPower      = 50,
+    }
+
+    
+    local _origAmbient      = Lighting.Ambient
+    local _origBrightness   = Lighting.Brightness
+    local _origFogEnd       = Lighting.FogEnd
+    local _origFogStart     = Lighting.FogStart
+    local _origFogColor     = Lighting.FogColor
+    local _origShadows      = Lighting.GlobalShadows
+    local _origGravity      = workspace.Gravity
+
+    
+    local function applyGravity(v)
+        workspace.Gravity = v
+    end
+
+    
+    local function applyFullbright(v)
+        if v then
+            Lighting.Ambient    = Color3.fromRGB(178, 178, 178)
+            Lighting.Brightness = 2
+        else
+            Lighting.Ambient    = _origAmbient
+            Lighting.Brightness = _origBrightness
+        end
+    end
+
+    
+    local function applyShadows(v)
+        Lighting.GlobalShadows = not v
+    end
+
+    
+    local function applyFog(v)
+        if v then
+            Lighting.FogEnd   = 1e9
+            Lighting.FogStart = 1e9
+        else
+            Lighting.FogEnd   = _origFogEnd
+            Lighting.FogStart = _origFogStart
+            Lighting.FogColor = _origFogColor
+        end
+    end
+
+    
+    UserInputService.JumpRequest:Connect(function()
+        if not PlayerSettings.InfiniteJump then return end
+        local hum = getHum()
+        if hum then hum:ChangeState(Enum.HumanoidStateType.Jumping) end
+    end)
+
+    
+    local _flyConn = nil
+    local _flyKeys = {w=false,s=false,a=false,d=false,space=false,shift=false}
+
+    local function startFly()
+        if _flyConn then return end
+        local hum = getHum()
+        if hum then hum.PlatformStand = true end
+        _flyConn = RunService.Heartbeat:Connect(function(dt)
+            if not PlayerSettings.Fly then return end
+            local hrp = getHRP(); if not hrp then return end
+            local mv = Vector3.new(0,0,0)
+            local spd = PlayerSettings.FlySpeed
+            if _flyKeys.w     then mv = mv + Camera.CFrame.LookVector  * spd end
+            if _flyKeys.s     then mv = mv - Camera.CFrame.LookVector  * spd end
+            if _flyKeys.a     then mv = mv - Camera.CFrame.RightVector * spd end
+            if _flyKeys.d     then mv = mv + Camera.CFrame.RightVector * spd end
+            if _flyKeys.space then mv = mv + Vector3.new(0, spd, 0) end
+            if _flyKeys.shift then mv = mv - Vector3.new(0, spd, 0) end
+            if mv.Magnitude > 0 then hrp.CFrame = hrp.CFrame + mv * dt end
+            pcall(function() hrp.AssemblyLinearVelocity = Vector3.zero end)
+        end)
+    end
+
+    local function stopFly()
+        if _flyConn then _flyConn:Disconnect(); _flyConn = nil end
+        local hum = getHum()
+        if hum then hum.PlatformStand = false end
+    end
+
+    UserInputService.InputBegan:Connect(function(inp, gp)
+        if gp then return end
+        local k = inp.KeyCode
+        if k == Enum.KeyCode.W     then _flyKeys.w     = true end
+        if k == Enum.KeyCode.S     then _flyKeys.s     = true end
+        if k == Enum.KeyCode.A     then _flyKeys.a     = true end
+        if k == Enum.KeyCode.D     then _flyKeys.d     = true end
+        if k == Enum.KeyCode.Space then _flyKeys.space = true end
+        if k == Enum.KeyCode.LeftShift then _flyKeys.shift = true end
+    end)
+    UserInputService.InputEnded:Connect(function(inp)
+        local k = inp.KeyCode
+        if k == Enum.KeyCode.W     then _flyKeys.w     = false end
+        if k == Enum.KeyCode.S     then _flyKeys.s     = false end
+        if k == Enum.KeyCode.A     then _flyKeys.a     = false end
+        if k == Enum.KeyCode.D     then _flyKeys.d     = false end
+        if k == Enum.KeyCode.Space then _flyKeys.space = false end
+        if k == Enum.KeyCode.LeftShift then _flyKeys.shift = false end
+    end)
+
+    
+    RunService.Stepped:Connect(function()
+        if not PlayerSettings.NoClip then return end
+        local char = getChar(); if not char then return end
+        for _, p in ipairs(char:GetDescendants()) do
+            if p:IsA("BasePart") then
+                p.CanCollide = false
+            end
+        end
+    end)
+
+    
+    RunService.Heartbeat:Connect(function()
+        local hum = getHum(); if not hum then return end
+        if PlayerSettings.Speed and PlayerSettings.SpeedActive then
+            hum.WalkSpeed = PlayerSettings.SpeedValue
+        end
+        if PlayerSettings.JumpBoost and PlayerSettings.JumpActive then
+            hum.JumpPower = PlayerSettings.JumpPower
+        end
+    end)
+
+ 
+    local Window = KraviX:CreateWindow({ Name = "Universal", Url = "discord.gg/fDdwWjz8yk" })
+
+
+    local AimbotSettings = {
+        Enabled=false, FOV=100, ShowFOV=false,
+        FOVColor=Color3.fromRGB(255,255,255), Smoothness=1,
+        TargetPart="Head", Sticky=false, StickyTarget=nil,
+        Whitelist={}, TeamCheck=false, WallCheck=false,
+    }
+    local _aimBindState=false; local _aimMode="Hold"; local _aimBindObj=nil
+
+    local AimbotCircle=Drawing.new("Circle")
+    AimbotCircle.Thickness=1.5; AimbotCircle.NumSides=64; AimbotCircle.Filled=false; AimbotCircle.Visible=false
+
+    local function getPart(char,name)
+        if not char then return nil end
+        local p=char:FindFirstChild(name); if p then return p end
+        if name=="Torso" then return char:FindFirstChild("UpperTorso") or char:FindFirstChild("Head") end
+        if name=="UpperTorso" then return char:FindFirstChild("Torso") or char:FindFirstChild("Head") end
+        return char:FindFirstChild("Head")
+    end
+
+    local function getClosestAim(fov)
+        local best,closest=fov,nil
+        local cx=Camera.ViewportSize.X/2; local cy=Camera.ViewportSize.Y/2
+        for _,plr in ipairs(Players:GetPlayers()) do
+            if plr==LocalPlayer or not plr.Character then continue end
+            local nl=plr.Name:lower()
+            local dl=plr.DisplayName:lower()
+            local wl=false
+            for entry in pairs(AimbotSettings.Whitelist) do
+                local e=entry:lower()
+                if nl:sub(1,#e)==e or dl:sub(1,#e)==e then wl=true; break end
+            end
+            if wl then continue end
+            local hum=plr.Character:FindFirstChildOfClass("Humanoid")
+            if not hum or hum.Health<=0 then continue end
+            if AimbotSettings.TeamCheck and LocalPlayer.Team and plr.Team==LocalPlayer.Team then continue end
+            local tp=getPart(plr.Character,AimbotSettings.TargetPart); if not tp then continue end
+            if AimbotSettings.WallCheck then
+                local params=RaycastParams.new()
+                params.FilterType=Enum.RaycastFilterType.Exclude
+                params.FilterDescendantsInstances={LocalPlayer.Character,Camera}
+                local ray=workspace:Raycast(Camera.CFrame.Position,tp.Position-Camera.CFrame.Position,params)
+                if not (ray and ray.Instance and ray.Instance:IsDescendantOf(plr.Character)) then continue end
+            end
+            local tp=getPart(plr.Character,AimbotSettings.TargetPart); if not tp then continue end
+            local sp,on=Camera:WorldToViewportPoint(tp.Position)
+            if on then
+                local d=(Vector2.new(sp.X,sp.Y)-Vector2.new(cx,cy)).Magnitude
+                if d<best then best=d; closest=plr end
+            end
+        end
+        return closest
+    end
+
+    RunService.RenderStepped:Connect(function()
+        local cx=Camera.ViewportSize.X/2; local cy=Camera.ViewportSize.Y/2
+        AimbotCircle.Position=Vector2.new(cx,cy); AimbotCircle.Radius=AimbotSettings.FOV
+        AimbotCircle.Color=AimbotSettings.FOVColor
+        AimbotCircle.Visible=AimbotSettings.ShowFOV and AimbotSettings.Enabled and not _hidden
+        if not (AimbotSettings.Enabled and _aimBindState) then
+            if not AimbotSettings.Sticky then AimbotSettings.StickyTarget=nil end; return
+        end
+        local target=nil
+        if AimbotSettings.Sticky and AimbotSettings.StickyTarget then
+            local sc=AimbotSettings.StickyTarget
+            local hum=sc.Character and sc.Character:FindFirstChildOfClass("Humanoid")
+            if hum and hum.Health>0 then target=sc else AimbotSettings.StickyTarget=nil end
+        end
+        if not target then
+            target=getClosestAim(AimbotSettings.FOV)
+            if AimbotSettings.Sticky and target then AimbotSettings.StickyTarget=target end
+        end
+        if not (target and target.Character) then return end
+        local tp=getPart(target.Character,AimbotSettings.TargetPart); if not tp then return end
+        Camera.CFrame=Camera.CFrame:Lerp(CFrame.new(Camera.CFrame.Position,tp.Position),AimbotSettings.Smoothness)
+    end)
+
+    local function isAimInput(inp)
+        if not _aimBindObj then return false end
+        return matchesBind(inp,_aimBindObj.Value)
+    end
+    UserInputService.InputBegan:Connect(function(inp,proc)
+        if proc or not AimbotSettings.Enabled then return end
+        if isAimInput(inp) then
+            if _aimMode=="Hold" then _aimBindState=true
+            else _aimBindState=not _aimBindState; if not _aimBindState then AimbotSettings.StickyTarget=nil end end
+        end
+    end)
+    UserInputService.InputEnded:Connect(function(inp)
+        if not AimbotSettings.Enabled or _aimMode~="Hold" then return end
+        if isAimInput(inp) then _aimBindState=false; AimbotSettings.StickyTarget=nil end
+    end)
+
+
+    local ESPSettings = {
+        Enabled      = false,
+        Box          = true,  BoxColor     = Color3.fromRGB(255,255,255),
+        Name         = true,  NameColor    = Color3.fromRGB(255,255,255),
+        Distance     = true,  DistColor    = Color3.fromRGB(200,200,200),
+        Tracers      = false, TracerColor  = Color3.fromRGB(255,255,255),
+        Skeleton     = false, SkelColor    = Color3.fromRGB(255,255,255),
+        TeamCheck    = false, WallCheck    = false,
+    }
+
+    local playerESP={}
+
+    local BONES={
+        {"Head","UpperTorso"},{"UpperTorso","LowerTorso"},
+        {"UpperTorso","RightUpperArm"},{"RightUpperArm","RightLowerArm"},{"RightLowerArm","RightHand"},
+        {"UpperTorso","LeftUpperArm"},{"LeftUpperArm","LeftLowerArm"},{"LeftLowerArm","LeftHand"},
+        {"LowerTorso","RightUpperLeg"},{"RightUpperLeg","RightLowerLeg"},{"RightLowerLeg","RightFoot"},
+        {"LowerTorso","LeftUpperLeg"},{"LeftUpperLeg","LeftLowerLeg"},{"LeftLowerLeg","LeftFoot"},
+    }
+    local BONES_R6={{"Head","Torso"},{"Torso","Left Arm"},{"Torso","Right Arm"},{"Torso","Left Leg"},{"Torso","Right Leg"}}
+
+    local function newLine(t,c) local l=Drawing.new("Line");l.Thickness=t or 1;l.Color=c or Color3.new(1,1,1);l.Transparency=1;l.Visible=false;return l end
+    local function newText(s,c) local t=Drawing.new("Text");t.Size=s or 13;t.Color=c or Color3.new(1,1,1);t.Outline=true;t.OutlineColor=Color3.new(0,0,0);t.Transparency=1;t.Visible=false;return t end
+
+    local function createESP(plr)
+        if playerESP[plr] or plr==LocalPlayer then return end
+        local d={
+            box={newLine(1),newLine(1),newLine(1),newLine(1)},
+            tName=newText(13), tDist=newText(11),
+            tracer=newLine(1),
+            skel={}, rigType=nil,
+        }
+        for i=1,14 do d.skel[i]=newLine(1) end
+        playerESP[plr]=d
+    end
+
+    local function destroyESP(plr)
+        local d=playerESP[plr]; if not d then return end
+        for _,l in ipairs(d.box) do pcall(function() l:Remove() end) end
+        pcall(function() d.tName:Remove() end); pcall(function() d.tDist:Remove() end)
+        pcall(function() d.tracer:Remove() end)
+        for _,l in ipairs(d.skel) do pcall(function() l:Remove() end) end
+        playerESP[plr]=nil
+    end
+
+    local function hideESP(d)
+        for _,l in ipairs(d.box) do l.Visible=false end
+        d.tName.Visible=false; d.tDist.Visible=false; d.tracer.Visible=false
+        for _,l in ipairs(d.skel) do l.Visible=false end
+    end
+
+    local function getBox(char)
+        local minX,minY,maxX,maxY=math.huge,math.huge,-math.huge,-math.huge; local found=false
+        for _,p in ipairs(char:GetChildren()) do
+            if not p:IsA("BasePart") then continue end
+            local sx,sy,sz=p.Size.X/2,p.Size.Y/2,p.Size.Z/2
+            for _,off in ipairs({Vector3.new(sx,sy,sz),Vector3.new(-sx,sy,sz),Vector3.new(sx,-sy,sz),Vector3.new(-sx,-sy,sz),Vector3.new(sx,sy,-sz),Vector3.new(-sx,sy,-sz),Vector3.new(sx,-sy,-sz),Vector3.new(-sx,-sy,-sz)}) do
+                local sp,on=Camera:WorldToViewportPoint(p.CFrame:PointToWorldSpace(off))
+                if not on or sp.Z<=0 then continue end
+                found=true
+                if sp.X<minX then minX=sp.X end; if sp.Y<minY then minY=sp.Y end
+                if sp.X>maxX then maxX=sp.X end; if sp.Y>maxY then maxY=sp.Y end
+            end
+        end
+        if not found then return nil end
+        return minX,minY,maxX,maxY
+    end
+
+    local function updateESP(plr,d)
+        local char=plr.Character; if not char then hideESP(d) return end
+        local hrp=char:FindFirstChild("HumanoidRootPart")
+        local hum=char:FindFirstChildOfClass("Humanoid")
+        if not hrp or not hum or hum.Health<=0 then hideESP(d) return end
+        local L,T,R,B=getBox(char); if not L then hideESP(d) return end
+        local W=R-L; local H=B-T; local cx=(L+R)/2
+        local dist=math.floor((hrp.Position-Camera.CFrame.Position).Magnitude)
+        local fs=math.clamp(H-3,6,14)
+
+        if ESPSettings.Box then
+            local bc=ESPSettings.BoxColor
+            d.box[1].From=Vector2.new(L,T); d.box[1].To=Vector2.new(R,T); d.box[1].Color=bc; d.box[1].Visible=true
+            d.box[2].From=Vector2.new(L,B); d.box[2].To=Vector2.new(R,B); d.box[2].Color=bc; d.box[2].Visible=true
+            d.box[3].From=Vector2.new(L,T); d.box[3].To=Vector2.new(L,B); d.box[3].Color=bc; d.box[3].Visible=true
+            d.box[4].From=Vector2.new(R,T); d.box[4].To=Vector2.new(R,B); d.box[4].Color=bc; d.box[4].Visible=true
+        else for _,l in ipairs(d.box) do l.Visible=false end end
+
+        if ESPSettings.Name then
+            d.tName.Text=plr.DisplayName; d.tName.Color=ESPSettings.NameColor
+            d.tName.Size=fs; d.tName.Position=Vector2.new(cx,T-fs-2); d.tName.Center=true; d.tName.Visible=true
+        else d.tName.Visible=false end
+
+        if ESPSettings.Distance then
+            d.tDist.Text=dist.." studs"; d.tDist.Color=ESPSettings.DistColor
+            d.tDist.Size=math.max(fs-2,6); d.tDist.Position=Vector2.new(cx,B+2); d.tDist.Center=true; d.tDist.Visible=true
+        else d.tDist.Visible=false end
+
+        if ESPSettings.Tracers then
+            d.tracer.From=Vector2.new(Camera.ViewportSize.X/2,Camera.ViewportSize.Y)
+            d.tracer.To=Vector2.new(cx,B); d.tracer.Color=ESPSettings.TracerColor
+            d.tracer.Transparency=1; d.tracer.Visible=true
+        else d.tracer.Visible=false end
+
+        if ESPSettings.Skeleton then
+            if not d.rigType then d.rigType=char:FindFirstChild("Torso") and "R6" or "R15" end
+            local bones=d.rigType=="R6" and BONES_R6 or BONES
+            for i=1,14 do d.skel[i].Visible=false end
+            for i,bone in ipairs(bones) do
+                local p0=char:FindFirstChild(bone[1]); local p1=char:FindFirstChild(bone[2])
+                if p0 and p1 then
+                    local s0,on0=Camera:WorldToViewportPoint(p0.Position)
+                    local s1,on1=Camera:WorldToViewportPoint(p1.Position)
+                    if on0 and on1 and s0.Z>0 and s1.Z>0 then
+                        d.skel[i].From=Vector2.new(s0.X,s0.Y); d.skel[i].To=Vector2.new(s1.X,s1.Y)
+                        d.skel[i].Color=ESPSettings.SkelColor; d.skel[i].Transparency=1; d.skel[i].Visible=true
+                    end
+                end
+            end
+        else for i=1,14 do d.skel[i].Visible=false end end
+    end
+
+    local function onPlayerAdded(plr)
+        if plr==LocalPlayer then return end
+        createESP(plr)
+        plr.CharacterAdded:Connect(function() local d=playerESP[plr]; if d then d.rigType=nil end end)
+    end
+    for _,p in ipairs(Players:GetPlayers()) do onPlayerAdded(p) end
+    Players.PlayerAdded:Connect(onPlayerAdded)
+    Players.PlayerRemoving:Connect(destroyESP)
+
+    RunService.RenderStepped:Connect(function()
+        if not ESPSettings.Enabled or _hidden then
+            for _,d in pairs(playerESP) do hideESP(d) end; return
+        end
+        for plr,d in pairs(playerESP) do
+            if ESPSettings.TeamCheck and LocalPlayer.Team and plr.Team==LocalPlayer.Team then hideESP(d); continue end
+            if ESPSettings.WallCheck then
+                local char=plr.Character
+                local hrp=char and char:FindFirstChild("HumanoidRootPart")
+                if hrp then
+                    local params=RaycastParams.new()
+                    params.FilterType=Enum.RaycastFilterType.Exclude
+                    params.FilterDescendantsInstances={LocalPlayer.Character,Camera}
+                    local ray=workspace:Raycast(Camera.CFrame.Position,hrp.Position-Camera.CFrame.Position,params)
+                    if not (ray and ray.Instance and ray.Instance:IsDescendantOf(char)) then hideESP(d); continue end
+                end
+            end
+            updateESP(plr,d)
+        end
+    end)
+
+    local TabAimbot=Window:CreateTab("Aimbot")
+    local secAim=TabAimbot:AddSection("Aimbot","Left")
+
+    secAim:AddToggle({Name="Enable Aimbot",Default=false,Callback=function(v)
+        AimbotSettings.Enabled=v; if not v then _aimBindState=false; AimbotSettings.StickyTarget=nil end
+    end})
+    secAim:AddSlider({Name="FOV",Min=20,Max=800,Default=100,Rounding=0,Callback=function(v) AimbotSettings.FOV=v end})
+    secAim:AddSlider({Name="Smoothness",Min=0.01,Max=1,Default=1,Rounding=2,Callback=function(v) AimbotSettings.Smoothness=v end})
+    secAim:AddDropdown({Name="Target Part",Values={"Head","HumanoidRootPart","UpperTorso"},Default="Head",
+        Callback=function(v) AimbotSettings.TargetPart=v; AimbotSettings.StickyTarget=nil end})
+    secAim:AddDropdown({Name="Mode",Values={"Hold","Toggle"},Default="Hold",
+        Callback=function(v) _aimMode=v; _aimBindState=false end})
+    _aimBindObj=secAim:AddMouseKeybind({Name="Aim Key",Default={type="mouse",value=Enum.UserInputType.MouseButton2},
+        Callback=function() _aimBindState=false; AimbotSettings.StickyTarget=nil end})
+    secAim:AddToggle({Name="Sticky",Default=false,Callback=function(v)
+        AimbotSettings.Sticky=v; if not v then AimbotSettings.StickyTarget=nil end
+    end})
+    secAim:AddToggle({Name="Team Check",Default=false,Callback=function(v) AimbotSettings.TeamCheck=v end})
+    secAim:AddToggle({Name="Wall Check",Default=false,Callback=function(v) AimbotSettings.WallCheck=v end})
+    secAim:AddSeparator()
+    secAim:AddToggle({Name="Show FOV",Default=false,Callback=function(v) AimbotSettings.ShowFOV=v end})
+    secAim:AddColorPicker({Name="FOV Color",Default=Color3.fromRGB(255,255,255),Callback=function(v) AimbotSettings.FOVColor=v end})
+    secAim:AddSeparator()
+    secAim:AddLabel({Text="Whitelist — ignores these players:"})
+    secAim:AddTextbox({Name="Add/Remove",Placeholder="Player name",Callback=function(name)
+        name=name:match("^%s*(.-)%s*$"); if name=="" then return end
+        local nl=name:lower(); local existing=nil
+        for entry in pairs(AimbotSettings.Whitelist) do
+            local e=entry:lower()
+            if e==nl or e:sub(1,#nl)==nl or nl:sub(1,#e)==e then existing=entry; break end
+        end
+        if existing then
+            AimbotSettings.Whitelist[existing]=nil
+            Window.Notify("Aimbot WL",existing.." removed",2); return
+        end
+        local resolved=name
+        for _,plr in ipairs(Players:GetPlayers()) do
+            if plr.Name:lower():sub(1,#nl)==nl or plr.DisplayName:lower():sub(1,#nl)==nl then
+                resolved=plr.Name; break
+            end
+        end
+        AimbotSettings.Whitelist[resolved]=true
+        Window.Notify("Aimbot WL",resolved.." added",2)
+    end})
+
+    local TabESP=Window:CreateTab("ESP")
+    local secESPL=TabESP:AddSection("ESP","Left")
+    local secESPR=TabESP:AddSection("Visuals","Right")
+
+    secESPL:AddToggle({Name="Enable ESP",Default=false,Callback=function(v) ESPSettings.Enabled=v end})
+    secESPL:AddSeparator()
+    secESPL:AddToggle({Name="Box",Default=true,Callback=function(v) ESPSettings.Box=v end})
+    secESPL:AddColorPicker({Name="Box Color",Default=Color3.fromRGB(255,255,255),Callback=function(v) ESPSettings.BoxColor=v end})
+    secESPL:AddSeparator()
+    secESPL:AddToggle({Name="Name",Default=true,Callback=function(v) ESPSettings.Name=v end})
+    secESPL:AddColorPicker({Name="Name Color",Default=Color3.fromRGB(255,255,255),Callback=function(v) ESPSettings.NameColor=v end})
+    secESPL:AddToggle({Name="Distance",Default=true,Callback=function(v) ESPSettings.Distance=v end})
+    secESPL:AddColorPicker({Name="Distance Color",Default=Color3.fromRGB(200,200,200),Callback=function(v) ESPSettings.DistColor=v end})
+    secESPL:AddSeparator()
+    secESPL:AddToggle({Name="Team Check",Default=false,Callback=function(v) ESPSettings.TeamCheck=v end})
+    secESPL:AddToggle({Name="Wall Check",Default=false,Callback=function(v) ESPSettings.WallCheck=v end})
+
+    secESPR:AddToggle({Name="Tracers",Default=false,Callback=function(v) ESPSettings.Tracers=v end})
+    secESPR:AddColorPicker({Name="Tracer Color",Default=Color3.fromRGB(255,255,255),Callback=function(v) ESPSettings.TracerColor=v end})
+    secESPR:AddSeparator()
+    secESPR:AddToggle({Name="Skeleton",Default=false,Callback=function(v) ESPSettings.Skeleton=v end})
+    secESPR:AddColorPicker({Name="Skeleton Color",Default=Color3.fromRGB(255,255,255),Callback=function(v) ESPSettings.SkelColor=v end})
+
+    local TabMisc2=Window:CreateTab("Misc")
+    local secMisc=TabMisc2:AddSection("Movement","Left")
+
+    secMisc:AddToggle({Name="WalkSpeed",Default=false,Callback=function(v)
+        PlayerSettings.Speed=v; PlayerSettings.SpeedActive=v
+        if not v then local hum=getHum(); if hum then hum.WalkSpeed=16 end end
+    end})
+    secMisc:AddSlider({Name="Walk Speed",Min=16,Max=500,Default=16,Rounding=0,Callback=function(v) PlayerSettings.SpeedValue=v end})
+    local _speedBindObj=secMisc:AddMouseKeybind({Name="Speed Keybind",Default={type="key",value=Enum.KeyCode.V},Callback=function() end})
+    secMisc:AddSeparator()
+    secMisc:AddToggle({Name="Jump Power",Default=false,Callback=function(v)
+        PlayerSettings.JumpBoost=v; PlayerSettings.JumpActive=v
+        if not v then local hum=getHum(); if hum then hum.JumpPower=50 end end
+    end})
+    secMisc:AddSlider({Name="Jump Power",Min=50,Max=500,Default=50,Rounding=0,Callback=function(v) PlayerSettings.JumpPower=v end})
+    local _jumpBindObj=secMisc:AddMouseKeybind({Name="Jump Keybind",Default={type="key",value=Enum.KeyCode.X},Callback=function() end})
+    secMisc:AddSeparator()
+    secMisc:AddToggle({Name="Fly",Default=false,Callback=function(v)
+        PlayerSettings.Fly=v; PlayerSettings.FlyActive=v
+        if v then startFly() else stopFly() end
+    end})
+    secMisc:AddSlider({Name="Fly Speed",Min=10,Max=500,Default=50,Rounding=0,Callback=function(v) PlayerSettings.FlySpeed=v end})
+    local _flyBindObj=secMisc:AddMouseKeybind({Name="Fly Keybind",Default={type="key",value=Enum.KeyCode.C},Callback=function() end})
+
+    UserInputService.InputBegan:Connect(function(inp,proc)
+        if proc then return end
+        if matchesBind(inp,_speedBindObj and _speedBindObj.Value) then
+            if not PlayerSettings.Speed then return end
+            PlayerSettings.SpeedActive = not PlayerSettings.SpeedActive
+            if not PlayerSettings.SpeedActive then local hum=getHum(); if hum then hum.WalkSpeed=16 end end
+        end
+        if matchesBind(inp,_jumpBindObj and _jumpBindObj.Value) then
+            if not PlayerSettings.JumpBoost then return end
+            PlayerSettings.JumpActive = not PlayerSettings.JumpActive
+            if not PlayerSettings.JumpActive then local hum=getHum(); if hum then hum.JumpPower=50 end end
+        end
+        if matchesBind(inp,_flyBindObj and _flyBindObj.Value) then
+            if not PlayerSettings.Fly then return end
+            PlayerSettings.FlyActive = not PlayerSettings.FlyActive
+            if PlayerSettings.FlyActive then startFly() else stopFly() end
+        end
+    end)
+    secMisc:AddSeparator()
+    secMisc:AddToggle({Name="Infinite Jump",Default=false,Callback=function(v) PlayerSettings.InfiniteJump=v end})
+    secMisc:AddSeparator()
+    secMisc:AddToggle({Name="Fullbright",Default=false,Callback=function(v) applyFullbright(v) end})
+    secMisc:AddToggle({Name="Remove Fog",Default=false,Callback=function(v) applyFog(v) end})
+    secMisc:AddToggle({Name="Remove Shadows",Default=false,Callback=function(v) applyShadows(v) end})
+    local _gravityEnabled = false
+    secMisc:AddToggle({Name="Custom Gravity",Default=false,Callback=function(v)
+        _gravityEnabled=v
+        if not v then applyGravity(_origGravity) end
+    end})
+    secMisc:AddSlider({Name="Gravity",Min=0,Max=400,Default=196,Rounding=0,Callback=function(v)
+        if _gravityEnabled then applyGravity(v) end
+    end})
+
+
+    local MiscSettings = {
+        AntiFling    = false,
+        AntiAFK      = false,
+        HitboxExp    = false,
+        HitboxSize   = 5,
+        HitboxColor  = Color3.fromRGB(0, 0, 255),
+        HitboxTrans  = 0.7,
+        NoClip       = false,
+        InfJump      = false,
+    }
+
+  
+    RunService.Stepped:Connect(function()
+        if not MiscSettings.AntiFling then return end
+        for _, plr in pairs(Players:GetPlayers()) do
+            if plr ~= LocalPlayer and plr.Character then
+                for _, v in pairs(plr.Character:GetDescendants()) do
+                    if v:IsA("BasePart") then v.CanCollide = false end
+                end
+            end
+        end
+    end)
+
+    
+    local _afkConn=nil
+    local function startAntiAFK()
+        if _afkConn then return end
+        local VIM=game:GetService("VirtualInputManager")
+        _afkConn=RunService.Heartbeat:Connect(function()
+            pcall(function() VIM:SendKeyEvent(true,Enum.KeyCode.W,false,game) end)
+            pcall(function() VIM:SendKeyEvent(false,Enum.KeyCode.W,false,game) end)
+        end)
+    end
+    local function stopAntiAFK()
+        if _afkConn then _afkConn:Disconnect(); _afkConn=nil end
+    end
+
+    
+    RunService.RenderStepped:Connect(function()
+        if not MiscSettings.HitboxExp then return end
+        for _,plr in ipairs(Players:GetPlayers()) do
+            if plr==LocalPlayer then continue end
+            pcall(function()
+                local hrp=plr.Character.HumanoidRootPart
+                hrp.Size=Vector3.new(MiscSettings.HitboxSize,MiscSettings.HitboxSize,MiscSettings.HitboxSize)
+                hrp.Transparency=_hidden and 1 or MiscSettings.HitboxTrans
+                hrp.Color=MiscSettings.HitboxColor
+                hrp.Material=Enum.Material.Neon
+                hrp.CanCollide=false
+            end)
+        end
+    end)
+
+
+    local secAnti=TabMisc2:AddSection("Anti","Right")
+
+    secAnti:AddToggle({Name="Anti-Fling",Default=false,Callback=function(v) MiscSettings.AntiFling=v end})
+    secAnti:AddToggle({Name="Anti-AFK",Default=false,Callback=function(v)
+        MiscSettings.AntiAFK=v; if v then startAntiAFK() else stopAntiAFK() end
+    end})
+    secAnti:AddSeparator()
+    secAnti:AddToggle({Name="Hitbox Expander",Default=false,Callback=function(v) MiscSettings.HitboxExp=v end})
+    secAnti:AddSlider({Name="Hitbox Size",Min=1,Max=20,Default=5,Rounding=0,Callback=function(v) MiscSettings.HitboxSize=v end})
+    secAnti:AddColorPicker({Name="Hitbox Color",Default=Color3.fromRGB(0,0,255),Callback=function(v) MiscSettings.HitboxColor=v end})
+    secAnti:AddSlider({Name="Hitbox Trans",Min=0,Max=1,Default=0.7,Rounding=2,Callback=function(v) MiscSettings.HitboxTrans=v end})
+
+
+    local _origFOV     = Camera.FieldOfView
+    local _origMaxZoom = LocalPlayer.CameraMaxZoomDistance
+
+    local secWorld2 = TabMisc2:AddSection("World", "Right")
+    secWorld2:AddSlider({Name="Camera FOV",Min=30,Max=120,Default=70,Rounding=0,Callback=function(v) Camera.FieldOfView=v end})
+    secWorld2:AddToggle({Name="Unlock Max Zoom",Default=false,Callback=function(v) LocalPlayer.CameraMaxZoomDistance=v and 1000 or _origMaxZoom end})
+    secWorld2:AddSlider({Name="Time of Day",Min=0,Max=23,Default=14,Rounding=0,Callback=function(v)
+        Lighting.TimeOfDay=string.format("%02d:00:00",math.floor(v))
+    end})
+
+
+    local function fullUnload()
+        AimbotSettings.Enabled=false; _aimBindState=false; AimbotSettings.StickyTarget=nil
+        ESPSettings.Enabled=false
+        PlayerSettings.Fly=false; stopFly()
+        PlayerSettings.Speed=false; PlayerSettings.JumpBoost=false
+        PlayerSettings.InfiniteJump=false; PlayerSettings.NoClip=false
+        MiscSettings.AntiFling=false
+        MiscSettings.AntiAFK=false; stopAntiAFK()
+        MiscSettings.HitboxExp=false
+        
+        for _,plr in ipairs(Players:GetPlayers()) do
+            if plr~=LocalPlayer then
+                pcall(function()
+                    local hrp=plr.Character.HumanoidRootPart
+                    hrp.Size=Vector3.new(2,2,1)
+                    hrp.Transparency=1
+                    hrp.Material=Enum.Material.SmoothPlastic
+                    hrp.CanCollide=true
+                end)
+            end
+        end
+        _hidden=false
+        local hum=getHum()
+        if hum then hum.WalkSpeed=16; hum.JumpPower=50; hum.PlatformStand=false end
+        workspace.Gravity=_origGravity
+        applyFullbright(false); applyFog(false); applyShadows(false)
+        Camera.FieldOfView=_origFOV
+        LocalPlayer.CameraMaxZoomDistance=_origMaxZoom
+        for plr,_ in pairs(playerESP) do destroyESP(plr) end
+        AimbotCircle.Visible=false; pcall(function() AimbotCircle:Remove() end)
+        task.wait(0.1)
+        pcall(function()
+            if Window._ScreenGui and Window._ScreenGui.Parent then
+                Window._ScreenGui:Destroy()
+            end
+        end)
+    end
+
+    local TabUtil  = Window:CreateTab("Utility")
+    local secMenu  = TabUtil:AddSection("Menu", "Left")
+    local secUtils = TabUtil:AddSection("Utils", "Right")
+
+    secMenu:AddLabel({Text="Menu toggle key (keyboard only):"})
+    local _menuBindObj = secMenu:AddMouseKeybind({
+        Name="Menu Toggle Key", Default={type="key", value=Enum.KeyCode.RightControl},
+        Callback=function() end
+    })
+    UserInputService.InputBegan:Connect(function(inp, proc)
+        if proc then return end
+        if matchesMenuBind(inp, _menuBindObj and _menuBindObj.Value) then Window.ToggleWindow() end
+    end)
+
+    local _hideBindObj = secUtils:AddMouseKeybind({
+        Name="Hide Visuals", Default={type="key", value=Enum.KeyCode.Insert},
+        Callback=function() end
+    })
+    secUtils:AddLabel({Text="Hides all drawings. Features keep running."})
+    secUtils:AddSeparator()
+    local _unloadBindObj = secUtils:AddMouseKeybind({
+        Name="Unload Script", Default={type="key", value=Enum.KeyCode.End},
+        Callback=function() end
+    })
+    secUtils:AddLabel({Text="Disables everything and closes the UI."})
+    secUtils:AddSeparator()
+    secUtils:AddButton({Name="Rejoin Server",Callback=function()
+        local TeleportService=game:GetService("TeleportService")
+        if game.JobId~="" then
+            TeleportService:TeleportToPlaceInstance(game.PlaceId,game.JobId,LocalPlayer)
+        else
+            TeleportService:Teleport(game.PlaceId,LocalPlayer)
+        end
+    end})
+
+    UserInputService.InputBegan:Connect(function(inp, proc)
+        if proc then return end
+        if matchesBind(inp, _hideBindObj and _hideBindObj.Value) then
+            _hidden = not _hidden
+            AimbotCircle.Visible = not _hidden and AimbotSettings.ShowFOV and AimbotSettings.Enabled
+            if _hidden then for _,d in pairs(playerESP) do hideESP(d) end end
+        end
+        if matchesBind(inp, _unloadBindObj and _unloadBindObj.Value) then
+            fullUnload()
+        end
+    end)
