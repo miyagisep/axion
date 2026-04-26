@@ -13,9 +13,34 @@ local GAMES = {
         Source = [[loadstring(game:HttpGet("https://raw.githubusercontent.com/miyagisep/axion/refs/heads/main/dashoodis"))()]],
     },
     {
+        Name   = "Da Hood",
+        Color  = Color3.fromRGB(80, 200, 80),
+        Source = [[loadstring(game:HttpGet("https://raw.githubusercontent.com/miyagisep/axion/refs/heads/main/da%20hoodi"))()]],
+    },
+    {
         Name   = "Hood Customs",
         Color  = Color3.fromRGB(80, 200, 80),
         Source = [[loadstring(game:HttpGet("https://raw.githubusercontent.com/miyagisep/axion/refs/heads/main/hood%20customis"))()]],
+    },
+    {
+        Name   = "Murder Mystery 2",
+        Color  = Color3.fromRGB(80, 200, 80),
+        Source = [[loadstring(game:HttpGet("https://raw.githubusercontent.com/miyagisep/axion/refs/heads/main/mm22"))()]],
+    },
+    {
+        Name   = "Universal",
+        Color  = Color3.fromRGB(80, 200, 80),
+        Source = [[loadstring(game:HttpGet("https://raw.githubusercontent.com/miyagisep/axion/refs/heads/main/universali"))()]],
+    },
+    {
+        Name   = "Bite By Night",
+        Color  = Color3.fromRGB(80, 200, 80),
+        Source = [[loadstring(game:HttpGet("https://raw.githubusercontent.com/miyagisep/axion/refs/heads/main/bit%20by%20night"))()]],
+    },
+    {
+        Name   = "Combat Arena",
+        Color  = Color3.fromRGB(80, 200, 80),
+        Source = [[loadstring(game:HttpGet("https://raw.githubusercontent.com/miyagisep/axion/refs/heads/main/combat%20arena"))()]],
     },
 }
 
