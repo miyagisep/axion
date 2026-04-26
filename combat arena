@@ -1,0 +1,555 @@
+local KraviX = loadstring(game:HttpGet(
+    "https://raw.githubusercontent.com/sixsdev/KraviX/refs/heads/main/new%20ui%20desing"
+))()
+
+local Players          = game:GetService("Players")
+local RunService       = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local LocalPlayer      = Players.LocalPlayer
+local Camera           = workspace.CurrentCamera
+
+
+local function matchesBind(inp, bind)
+    if not bind then return false end
+    if bind.type == "mouse" then return inp.UserInputType == bind.value end
+    if bind.type == "key" then
+        return inp.UserInputType == Enum.UserInputType.Keyboard and inp.KeyCode == bind.value
+    end
+    return false
+end
+
+local function matchesMenuBind(inp, bind)
+    if not bind or bind.type ~= "key" then return false end
+    if inp.UserInputType ~= Enum.UserInputType.Keyboard then return false end
+    if bind.value == Enum.KeyCode.Unknown then return false end
+    return inp.KeyCode == bind.value
+end
+
+local function getTeam(model)
+    
+    local plr = Players:GetPlayerFromCharacter(model)
+    if plr and plr.Team then return plr.Team.Name end
+    -
+    local tv = model:FindFirstChild("Team")
+    if tv and tv.Value then return tv.Value end
+    
+    local n = model.Name:lower()
+    if n:find("red") then return "Red" end
+    if n:find("blue") then return "Blue" end
+    return nil
+end
+
+local function isSameTeamModel(model)
+    local myTeam = LocalPlayer.Team and LocalPlayer.Team.Name
+    if not myTeam then return false end
+    return getTeam(model) == myTeam
+end
+
+local function getClosestEnemy(fov)
+    local bestModel, bestDist = nil, fov
+    local cx = Camera.ViewportSize.X / 2
+    local cy = Camera.ViewportSize.Y / 2
+
+    for _, model in ipairs(workspace:GetDescendants()) do
+        if not model:IsA("Model") then continue end
+        local hum = model:FindFirstChildOfClass("Humanoid")
+        if not (hum and hum.Health > 0) then continue end
+        if model == LocalPlayer.Character then continue end
+        local plr = Players:GetPlayerFromCharacter(model)
+        if plr then
+            if plr == LocalPlayer then continue end
+            if isSameTeamModel(model) then continue end
+        end
+        local head = model:FindFirstChild("Head")
+        if not head then continue end
+        local sp, on = Camera:WorldToScreenPoint(head.Position)
+        if not on or sp.Z <= 0 then continue end
+        local d = math.sqrt((sp.X-cx)^2 + (sp.Y-cy)^2)
+        if d < bestDist then bestDist=d; bestModel=model end
+    end
+    return bestModel
+end
+
+local function getClosestHeadWallCheck()
+    local bestHead, bestDist = nil, math.huge
+    local cx = Camera.ViewportSize.X / 2
+    local cy = Camera.ViewportSize.Y / 2
+
+    for _, model in ipairs(workspace:GetDescendants()) do
+        if not model:IsA("Model") then continue end
+        local hum = model:FindFirstChildOfClass("Humanoid")
+        if not (hum and hum.Health > 0) then continue end
+        local plr = Players:GetPlayerFromCharacter(model)
+        if plr == LocalPlayer then continue end
+        if model == LocalPlayer.Character then continue end
+        local head = model:FindFirstChild("Head")
+        if not head then continue end
+        local sp, on = Camera:WorldToScreenPoint(head.Position)
+        if not on then continue end
+        local d = math.sqrt((sp.X-cx)^2 + (sp.Y-cy)^2)
+        if d >= bestDist then continue end
+        local params = RaycastParams.new()
+        params.FilterType = Enum.RaycastFilterType.Exclude
+        params.FilterDescendantsInstances = {LocalPlayer.Character, Camera}
+        local ray = workspace:Raycast(Camera.CFrame.Position, head.Position - Camera.CFrame.Position, params)
+        if ray and ray.Instance:IsDescendantOf(model) then
+            bestDist = d
+            bestHead = head
+        end
+    end
+    return bestHead
+end
+
+
+local SilentSettings = {
+    Enabled    = false,
+    FOV        = 50,
+    ShowFOV    = true,
+    FOVColor   = Color3.fromRGB(255, 255, 255),
+    TargetPart = "Head",
+}
+
+local SilentCircle    = Drawing.new("Circle")
+SilentCircle.Thickness = 1.5
+SilentCircle.NumSides  = 64
+SilentCircle.Filled    = false
+SilentCircle.Visible   = false
+
+local hitscanModule
+local ok, err = pcall(function()
+    hitscanModule = require(LocalPlayer.PlayerScripts.Client.game.classes.Projectiles.HitscanProjectile)
+end)
+if not ok then warn("HitscanProjectile not found:", err) end
+
+if hitscanModule then
+    local originalNew = hitscanModule.new
+    hitscanModule.new = function(origin, velocity, magnetStrength, owner, uniqueId, weaponConfig, tracerConfig, tracerOffset)
+        if SilentSettings.Enabled and owner == LocalPlayer then
+            local head = getClosestHeadWallCheck()
+            if head then
+                local model = head.Parent
+                local target = (model and model:FindFirstChild(SilentSettings.TargetPart)) or head
+                velocity = (target.Position - Camera.CFrame.Position).Unit * velocity.Magnitude
+            end
+        end
+        return originalNew(origin, velocity, magnetStrength, owner, uniqueId, weaponConfig, tracerConfig, tracerOffset)
+    end
+end
+
+
+local AimbotSettings = {
+    Enabled    = false,
+    FOV        = 50,
+    ShowFOV    = true,
+    FOVColor   = Color3.fromRGB(255, 255, 255),
+    Smoothness = 1,
+    TargetPart = "Head",
+    Sticky     = false,
+    StickyTarget = nil,
+}
+local _aimBindState = false
+local _aimMode      = "Hold"
+local _aimBindObj   = nil
+
+local _hidden = false
+
+local AimbotCircle    = Drawing.new("Circle")
+AimbotCircle.Thickness = 1.5
+AimbotCircle.NumSides  = 64
+AimbotCircle.Filled    = false
+AimbotCircle.Visible   = false
+
+RunService.RenderStepped:Connect(function()
+    local cx = Camera.ViewportSize.X / 2
+    local cy = Camera.ViewportSize.Y / 2
+
+    SilentCircle.Position = Vector2.new(cx, cy)
+    SilentCircle.Radius   = SilentSettings.FOV
+    SilentCircle.Color    = SilentSettings.FOVColor
+    SilentCircle.Visible  = SilentSettings.ShowFOV and SilentSettings.Enabled and not _hidden
+
+    AimbotCircle.Position = Vector2.new(cx, cy)
+    AimbotCircle.Radius   = AimbotSettings.FOV
+    AimbotCircle.Color    = AimbotSettings.FOVColor
+    AimbotCircle.Visible  = AimbotSettings.ShowFOV and AimbotSettings.Enabled and not _hidden
+
+    if not (AimbotSettings.Enabled and _aimBindState) then
+        if not AimbotSettings.Sticky then AimbotSettings.StickyTarget = nil end
+        return
+    end
+
+    local mob = nil
+    if AimbotSettings.Sticky and AimbotSettings.StickyTarget then
+        local m = AimbotSettings.StickyTarget
+        local hum = m and m.Parent and m:FindFirstChildOfClass("Humanoid")
+        if hum and hum.Health > 0 then mob = m
+        else AimbotSettings.StickyTarget = nil end
+    end
+    if not mob then
+        mob = getClosestEnemy(AimbotSettings.FOV)
+        if AimbotSettings.Sticky and mob then AimbotSettings.StickyTarget = mob end
+    end
+    if not mob then return end
+
+    local part = mob:FindFirstChild(AimbotSettings.TargetPart) or mob:FindFirstChild("Head")
+    if not part then return end
+
+    local prevType = Camera.CameraType
+    Camera.CameraType = Enum.CameraType.Scriptable
+    Camera.CFrame = Camera.CFrame:Lerp(CFrame.new(Camera.CFrame.Position, part.Position), AimbotSettings.Smoothness)
+    Camera.CameraType = prevType
+end)
+
+local function isAimInput(inp)
+    if not _aimBindObj then return false end
+    return matchesBind(inp, _aimBindObj.Value)
+end
+UserInputService.InputBegan:Connect(function(inp, proc)
+    if proc or not AimbotSettings.Enabled then return end
+    if isAimInput(inp) then
+        if _aimMode == "Hold" then _aimBindState = true
+        else _aimBindState = not _aimBindState; if not _aimBindState then AimbotSettings.StickyTarget = nil end end
+    end
+end)
+UserInputService.InputEnded:Connect(function(inp)
+    if not AimbotSettings.Enabled or _aimMode ~= "Hold" then return end
+    if isAimInput(inp) then _aimBindState = false; AimbotSettings.StickyTarget = nil end
+end)
+
+
+local ESPSettings = {
+    Enabled        = false,
+    Box            = true,
+    BoxColor       = Color3.fromRGB(255, 80, 80),
+    AllyColor      = Color3.fromRGB(80, 255, 80),
+    HealthBar      = false,
+    Names          = true,
+    NamesColor     = Color3.fromRGB(255, 255, 255),
+    Distance       = true,
+    Tracers        = false,
+    TracerOrigin   = "Bottom",
+    TracerColor    = Color3.fromRGB(255, 255, 255),
+    Highlight      = false,
+    HLFillColor    = Color3.fromRGB(255, 80, 80),
+    HLOutlineColor = Color3.fromRGB(255, 255, 255),
+    HLFillTrans    = 0.5,
+    HLOutTrans     = 0,
+    TeamCheck      = false,
+}
+
+local espFolder = Instance.new("Folder"); espFolder.Name = "CAESPF"; espFolder.Parent = workspace
+
+local modelESP = {}
+
+local function newLine(t,c) local l=Drawing.new("Line");l.Thickness=t or 1;l.Color=c or Color3.new(1,1,1);l.Visible=false;return l end
+
+local function makeBillboard(char, name, offsetY, textSize)
+    local head = char and char:FindFirstChild("Head")
+    if not head then return nil end
+    if head:FindFirstChild(name) then head:FindFirstChild(name):Destroy() end
+    local bb = Instance.new("BillboardGui")
+    bb.Name = name; bb.AlwaysOnTop = true
+    bb.Size = UDim2.new(0, 140, 0, 20)
+    bb.StudsOffset = Vector3.new(0, offsetY, 0)
+    bb.Adornee = head; bb.Parent = head
+    local lbl = Instance.new("TextLabel", bb)
+    lbl.Size = UDim2.new(1,0,1,0); lbl.BackgroundTransparency = 1
+    lbl.TextColor3 = Color3.new(1,1,1); lbl.TextStrokeTransparency = 0
+    lbl.TextStrokeColor3 = Color3.new(0,0,0)
+    lbl.Font = Enum.Font.GothamBold; lbl.TextSize = textSize or 13; lbl.Text = ""
+    return bb
+end
+
+local function createESPForModel(model)
+    if modelESP[model] then return end
+    modelESP[model] = {
+        box    = {top=newLine(1),bottom=newLine(1),left=newLine(1),right=newLine(1)},
+        hpBg   = newLine(4, Color3.new(0,0,0)),
+        hpBar  = newLine(2, Color3.fromRGB(0,255,0)),
+        tracer = newLine(1),
+        bb=nil, bbDist=nil, hl=nil,
+    }
+end
+
+local function removeESPForModel(model)
+    local d = modelESP[model]; if not d then return end
+    for _,v in pairs(d.box) do pcall(function() v:Remove() end) end
+    pcall(function() d.hpBg:Remove() end); pcall(function() d.hpBar:Remove() end)
+    pcall(function() d.tracer:Remove() end)
+    if d.bb and d.bb.Parent then d.bb:Destroy() end
+    if d.bbDist and d.bbDist.Parent then d.bbDist:Destroy() end
+    if d.hl and d.hl.Parent then d.hl:Destroy() end
+    modelESP[model] = nil
+end
+
+local function hideESPData(d)
+    for _,v in pairs(d.box) do v.Visible=false end
+    d.hpBg.Visible=false; d.hpBar.Visible=false; d.tracer.Visible=false
+    if d.bb then d.bb.Enabled=false end
+    if d.bbDist then d.bbDist.Enabled=false end
+end
+
+local function getScreenBox(char)
+    local minSX,minSY,maxSX,maxSY = math.huge,math.huge,-math.huge,-math.huge
+    local found = false
+    for _,p in ipairs(char:GetChildren()) do
+        if not p:IsA("BasePart") then continue end
+        local sx,sy,sz = p.Size.X/2, p.Size.Y/2, p.Size.Z/2
+        local corners = {
+            Vector3.new( sx, sy, sz), Vector3.new(-sx, sy, sz),
+            Vector3.new( sx,-sy, sz), Vector3.new(-sx,-sy, sz),
+            Vector3.new( sx, sy,-sz), Vector3.new(-sx, sy,-sz),
+            Vector3.new( sx,-sy,-sz), Vector3.new(-sx,-sy,-sz),
+        }
+        for _,offset in ipairs(corners) do
+            local worldPos = p.CFrame:PointToWorldSpace(offset)
+            local sp, on = Camera:WorldToScreenPoint(worldPos)
+            if not on or sp.Z <= 0 then continue end
+            found = true
+            if sp.X < minSX then minSX = sp.X end
+            if sp.Y < minSY then minSY = sp.Y end
+            if sp.X > maxSX then maxSX = sp.X end
+            if sp.Y > maxSY then maxSY = sp.Y end
+        end
+    end
+    if not found then return nil end
+    return minSX, minSY, maxSX, maxSY
+end
+
+local function updateESPModel(model, d, label, boxColor)
+    local hum = model:FindFirstChildOfClass("Humanoid")
+    local hrp = model:FindFirstChild("HumanoidRootPart")
+    if not hum or hum.Health<=0 or not hrp then hideESPData(d) return end
+    local L,T,R,B = getScreenBox(model)
+    if not L then hideESPData(d) return end
+    local h = B-T; if h<1 then hideESPData(d) return end
+    local dist = math.floor((hrp.Position-Camera.CFrame.Position).Magnitude)
+
+    if ESPSettings.Box then
+        d.box.top.From=Vector2.new(L,T);    d.box.top.To=Vector2.new(R,T)
+        d.box.bottom.From=Vector2.new(L,B); d.box.bottom.To=Vector2.new(R,B)
+        d.box.left.From=Vector2.new(L,T);   d.box.left.To=Vector2.new(L,B)
+        d.box.right.From=Vector2.new(R,T);  d.box.right.To=Vector2.new(R,B)
+        for _,b in pairs(d.box) do b.Color=boxColor; b.Visible=true end
+    else for _,b in pairs(d.box) do b.Visible=false end end
+
+    d.hpBg.Visible=false; d.hpBar.Visible=false
+
+    if ESPSettings.Names then
+        if not d.bb or not d.bb.Parent then d.bb = makeBillboard(model, "KXESP_Name", 1.5, 13) end
+        if d.bb then
+            local lbl = d.bb:FindFirstChildOfClass("TextLabel")
+            if lbl then lbl.Text=label; lbl.TextColor3=ESPSettings.NamesColor end
+            d.bb.Enabled=true
+        end
+    else if d.bb then d.bb.Enabled=false end end
+
+    if ESPSettings.Distance then
+        if not d.bbDist or not d.bbDist.Parent then d.bbDist = makeBillboard(model, "KXESP_Dist", -1.5, 11) end
+        if d.bbDist then
+            local lbl = d.bbDist:FindFirstChildOfClass("TextLabel")
+            if lbl then lbl.Text=dist.."m"; lbl.TextColor3=Color3.fromRGB(200,200,200) end
+            d.bbDist.Enabled=true
+        end
+    else if d.bbDist then d.bbDist.Enabled=false end end
+
+    if ESPSettings.Tracers then
+        local cx2 = (L+R)/2
+        local oy = ESPSettings.TracerOrigin == "Bottom" and Camera.ViewportSize.Y or 0
+        d.tracer.From=Vector2.new(Camera.ViewportSize.X/2, oy)
+        d.tracer.To=Vector2.new(cx2,B)
+        d.tracer.Color=ESPSettings.TracerColor; d.tracer.Visible=true
+    else d.tracer.Visible=false end
+
+    if ESPSettings.Highlight then
+        if not d.hl or not d.hl.Parent then
+            local hl=Instance.new("Highlight")
+            hl.FillColor=ESPSettings.HLFillColor; hl.OutlineColor=ESPSettings.HLOutlineColor
+            hl.FillTransparency=ESPSettings.HLFillTrans; hl.OutlineTransparency=ESPSettings.HLOutTrans
+            hl.Adornee=model; hl.Parent=espFolder; d.hl=hl
+        else
+            d.hl.FillColor=ESPSettings.HLFillColor; d.hl.OutlineColor=ESPSettings.HLOutlineColor
+            d.hl.FillTransparency=ESPSettings.HLFillTrans; d.hl.OutlineTransparency=ESPSettings.HLOutTrans
+        end
+    else if d.hl and d.hl.Parent then d.hl:Destroy(); d.hl=nil end end
+end
+
+
+local function onPlayerAdded(plr)
+    if plr == LocalPlayer then return end
+    plr.CharacterAdded:Connect(function(char)
+        local d = modelESP[char]
+        if d then
+            if d.bb and d.bb.Parent then d.bb:Destroy(); d.bb=nil end
+            if d.bbDist and d.bbDist.Parent then d.bbDist:Destroy(); d.bbDist=nil end
+            if d.hl and d.hl.Parent then d.hl:Destroy(); d.hl=nil end
+        end
+    end)
+end
+for _,p in ipairs(Players:GetPlayers()) do onPlayerAdded(p) end
+Players.PlayerAdded:Connect(onPlayerAdded)
+Players.PlayerRemoving:Connect(function(plr)
+    local char = plr.Character
+    if char then removeESPForModel(char) end
+end)
+
+RunService.RenderStepped:Connect(function()
+    
+    local activeModels = {}
+
+    if not ESPSettings.Enabled or _hidden then
+        for _,d in pairs(modelESP) do
+            hideESPData(d)
+            if d.hl and d.hl.Parent then d.hl:Destroy(); d.hl=nil end
+        end
+        return
+    end
+    
+    for _,plr in ipairs(Players:GetPlayers()) do
+        if plr == LocalPlayer then continue end
+        local char = plr.Character; if not char then continue end
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if not hum or hum.Health<=0 then continue end
+        local ally = isSameTeamModel(char)
+        if ally and ESPSettings.TeamCheck then continue end
+        local boxColor = ally and ESPSettings.AllyColor or ESPSettings.BoxColor
+        activeModels[char] = {label=plr.DisplayName, color=boxColor}
+    end
+
+    
+    for model, info in pairs(activeModels) do
+        if not modelESP[model] then createESPForModel(model) end
+        updateESPModel(model, modelESP[model], info.label, info.color)
+    end
+
+    
+    for model, d in pairs(modelESP) do
+        if not activeModels[model] then
+            hideESPData(d)
+            
+            if d.hl and d.hl.Parent then d.hl:Destroy(); d.hl=nil end
+            
+            if not model.Parent then removeESPForModel(model) end
+        end
+    end
+end)
+
+
+local Window = KraviX:CreateWindow({ Name="Combat Arena", Url="discord.gg/fDdwWjz8yk" })
+
+
+local TabAimbot = Window:CreateTab("Aimbot")
+local secAimbot = TabAimbot:AddSection("Aimbot", "Left")
+
+secAimbot:AddToggle({Name="Enable Aimbot", Default=false, Callback=function(v)
+    AimbotSettings.Enabled=v; if not v then _aimBindState=false; AimbotSettings.StickyTarget=nil end
+end})
+secAimbot:AddSlider({Name="FOV", Min=20, Max=1000, Default=50, Rounding=0, Callback=function(v) AimbotSettings.FOV=v end})
+secAimbot:AddSlider({Name="Smoothness", Min=0.01, Max=1, Default=1, Rounding=2, Callback=function(v) AimbotSettings.Smoothness=v end})
+secAimbot:AddDropdown({Name="Target Part", Values={"Head","HumanoidRootPart","UpperTorso"}, Default="Head",
+    Callback=function(v) AimbotSettings.TargetPart=v; AimbotSettings.StickyTarget=nil end})
+secAimbot:AddDropdown({Name="Mode", Values={"Hold","Toggle"}, Default="Hold",
+    Callback=function(v) _aimMode=v; _aimBindState=false end})
+_aimBindObj = secAimbot:AddMouseKeybind({
+    Name="Aim Key", Default={type="mouse", value=Enum.UserInputType.MouseButton2},
+    Callback=function() _aimBindState=false end
+})
+secAimbot:AddToggle({Name="Sticky Target", Default=false, Callback=function(v)
+    AimbotSettings.Sticky=v; if not v then AimbotSettings.StickyTarget=nil end
+end})
+secAimbot:AddSeparator()
+secAimbot:AddToggle({Name="Show FOV Circle", Default=true, Callback=function(v) AimbotSettings.ShowFOV=v end})
+secAimbot:AddColorPicker({Name="FOV Color", Default=Color3.fromRGB(255,255,255), Callback=function(v) AimbotSettings.FOVColor=v end})
+
+
+local TabSilent = Window:CreateTab("Silent Aim")
+local secSilent = TabSilent:AddSection("Silent Aim", "Left")
+
+secSilent:AddToggle({Name="Enable Silent Aim", Default=false, Callback=function(v) SilentSettings.Enabled=v end})
+secSilent:AddDropdown({Name="Target Part", Values={"Head","HumanoidRootPart","UpperTorso","LowerTorso"}, Default="Head",
+    Callback=function(v) SilentSettings.TargetPart=v end})
+secSilent:AddSlider({Name="FOV", Min=50, Max=1000, Default=50, Rounding=0, Callback=function(v) SilentSettings.FOV=v end})
+secSilent:AddSeparator()
+secSilent:AddToggle({Name="Show FOV Circle", Default=true, Callback=function(v) SilentSettings.ShowFOV=v end})
+secSilent:AddColorPicker({Name="FOV Color", Default=Color3.fromRGB(255,255,255), Callback=function(v) SilentSettings.FOVColor=v end})
+
+
+local TabESP  = Window:CreateTab("ESP")
+local secESPL = TabESP:AddSection("ESP", "Left")
+
+secESPL:AddToggle({Name="Enable ESP", Default=false, Callback=function(v) ESPSettings.Enabled=v end})
+secESPL:AddSeparator()
+secESPL:AddToggle({Name="Box", Default=true, Callback=function(v) ESPSettings.Box=v end})
+secESPL:AddColorPicker({Name="Enemy Color", Default=Color3.fromRGB(255,80,80), Callback=function(v) ESPSettings.BoxColor=v end})
+secESPL:AddColorPicker({Name="Ally Color", Default=Color3.fromRGB(80,255,80), Callback=function(v) ESPSettings.AllyColor=v end})
+secESPL:AddToggle({Name="Names", Default=true, Callback=function(v) ESPSettings.Names=v end})
+secESPL:AddColorPicker({Name="Names Color", Default=Color3.fromRGB(255,255,255), Callback=function(v) ESPSettings.NamesColor=v end})
+secESPL:AddToggle({Name="Team Check", Default=false, Callback=function(v) ESPSettings.TeamCheck=v end})
+secESPL:AddToggle({Name="Distance", Default=true, Callback=function(v) ESPSettings.Distance=v end})
+
+local secESPR = TabESP:AddSection("Visuals", "Right")
+secESPR:AddToggle({Name="Tracers", Default=false, Callback=function(v) ESPSettings.Tracers=v end})
+secESPR:AddDropdown({Name="Tracer Origin", Values={"Bottom","Top"}, Default="Bottom",
+    Callback=function(v) ESPSettings.TracerOrigin=v end})
+secESPR:AddColorPicker({Name="Tracer Color", Default=Color3.fromRGB(255,255,255), Callback=function(v) ESPSettings.TracerColor=v end})
+secESPR:AddSeparator()
+secESPR:AddToggle({Name="Highlight", Default=false, Callback=function(v) ESPSettings.Highlight=v end})
+secESPR:AddColorPicker({Name="HL Fill", Default=Color3.fromRGB(255,80,80), Callback=function(v) ESPSettings.HLFillColor=v end})
+secESPR:AddColorPicker({Name="HL Outline", Default=Color3.fromRGB(255,255,255), Callback=function(v) ESPSettings.HLOutlineColor=v end})
+secESPR:AddSlider({Name="HL Fill Trans", Min=0, Max=1, Default=0.5, Rounding=2, Callback=function(v) ESPSettings.HLFillTrans=v end})
+secESPR:AddSlider({Name="HL Outline Trans", Min=0, Max=1, Default=0, Rounding=2, Callback=function(v) ESPSettings.HLOutTrans=v end})
+
+local function fullUnload()
+    AimbotSettings.Enabled = false; _aimBindState = false; AimbotSettings.StickyTarget = nil
+    SilentSettings.Enabled = false
+    ESPSettings.Enabled    = false
+    _hidden                = false
+    for model,_ in pairs(modelESP) do removeESPForModel(model) end
+    modelESP = {}
+    AimbotCircle.Visible = false; SilentCircle.Visible = false
+    pcall(function() AimbotCircle:Remove() end)
+    pcall(function() SilentCircle:Remove() end)
+    if espFolder and espFolder.Parent then espFolder:Destroy() end
+    task.wait(0.1)
+    pcall(function()
+        if Window._ScreenGui and Window._ScreenGui.Parent then
+            Window._ScreenGui:Destroy()
+        end
+    end)
+end
+
+
+local TabMisc = Window:CreateTab("Misc")
+local secMenu = TabMisc:AddSection("Menu", "Left")
+secMenu:AddLabel({Text="Menu toggle key (keyboard only):"})
+local _menuBindObj = secMenu:AddMouseKeybind({
+    Name="Menu Toggle Key", Default={type="key", value=Enum.KeyCode.RightControl},
+    Callback=function() end
+})
+UserInputService.InputBegan:Connect(function(inp, proc)
+    if proc then return end
+    if matchesMenuBind(inp, _menuBindObj and _menuBindObj.Value) then Window.ToggleWindow() end
+end)
+
+local secUtils = TabMisc:AddSection("Utils", "Right")
+
+local _hideVisualsBindObj = secUtils:AddMouseKeybind({
+    Name="Hide Visuals", Default={type="key", value=Enum.KeyCode.Delete},
+    Callback=function() end
+})
+local _unloadBindObj = secUtils:AddMouseKeybind({
+    Name="Unload Script", Default={type="key", value=Enum.KeyCode.End},
+    Callback=function() end
+})
+
+UserInputService.InputBegan:Connect(function(inp, proc)
+    if proc then return end
+    if matchesBind(inp, _hideVisualsBindObj and _hideVisualsBindObj.Value) then
+        _hidden = not _hidden
+    end
+    if matchesBind(inp, _unloadBindObj and _unloadBindObj.Value) then
+        fullUnload()
+    end
+end)
+
+
