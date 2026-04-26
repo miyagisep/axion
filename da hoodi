@@ -370,10 +370,11 @@ end)
 
 
 RunService.RenderStepped:Connect(function()
+    if not (SpeedSettings.Enabled and SpeedSettings.KeybindActive) then return end
     local char = LocalPlayer.Character
     local hum  = char and char:FindFirstChildOfClass("Humanoid")
     if not hum then return end
-    hum.WalkSpeed = (SpeedSettings.Enabled and SpeedSettings.KeybindActive) and SpeedSettings.Value or 16
+    hum.WalkSpeed = SpeedSettings.Value
 end)
 
 
