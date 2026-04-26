@@ -29,7 +29,7 @@ local function getTeam(model)
     
     local plr = Players:GetPlayerFromCharacter(model)
     if plr and plr.Team then return plr.Team.Name end
-    -
+    
     local tv = model:FindFirstChild("Team")
     if tv and tv.Value then return tv.Value end
     
