@@ -10,11 +10,19 @@ local LocalPlayer      = Players.LocalPlayer
 local Camera           = workspace.CurrentCamera
 
 
+local Window
+local function notify(title, msg, duration)
+    if Window and Window.Notify then
+        Window.Notify(title, msg, duration)
+    end
+end
+
 local AimbotSettings = {
     Enabled=false, FOV=100, ShowFOV=false,
     FOVColor=Color3.fromRGB(255,255,255), Smoothness=1,
     TargetPart="Head", Sticky=false, StickyTarget=nil,
     PredictEnabled=false, PredictAmount=0.15,
+    IgnoreKO=false,
     Whitelist={},
 }
 local SilentAimSettings = {
@@ -49,7 +57,6 @@ for _,l in ipairs({TriggerBoxTop,TriggerBoxBot,TriggerBoxLeft,TriggerBoxRight}) 
     l.Thickness=1.5; l.Visible=false; l.ZIndex=5
 end
 
-
 local _aimBindState = false
 local _aimMode      = "Hold"
 local _aimBindObj   = nil
@@ -79,18 +86,111 @@ local function getPredictedPos(char, partName, amt)
     return part.Position + vel * amt
 end
 
+
 local function matchesWhitelist(whitelist, plr)
     if not whitelist then return false end
     local nameLower    = plr.Name:lower()
     local displayLower = plr.DisplayName:lower()
     for entry in pairs(whitelist) do
         local e = entry:lower()
-        if nameLower:sub(1, #e) == e or displayLower:sub(1, #e) == e then
+        if nameLower == e or displayLower == e then
             return true
         end
     end
     return false
 end
+
+local function findPlayersByPrefix(prefix)
+    local p = prefix:lower()
+    local found = {}
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr.Name:lower():sub(1, #p) == p
+        or plr.DisplayName:lower():sub(1, #p) == p then
+            table.insert(found, plr)
+        end
+    end
+    return found
+end
+
+local function handleWhitelistAdd(text, whitelist, label)
+    text = text:match("^%s*(.-)%s*$")
+    if text == "" then return end
+    local textLower = text:lower()
+
+    local existingKey = nil
+    for entry in pairs(whitelist) do
+        if entry:lower() == textLower then existingKey = entry; break end
+    end
+    if existingKey then
+        whitelist[existingKey] = nil
+        notify(label, existingKey.." removed", 2)
+        AimbotSettings.StickyTarget = nil
+        return
+    end
+
+    local matches = findPlayersByPrefix(text)
+    if #matches == 1 then
+        local plr = matches[1]
+        whitelist[plr.Name] = true
+        whitelist[plr.DisplayName] = true
+        notify(label, plr.Name.." added", 2)
+    elseif #matches > 1 then
+        local names = {}
+        for _, p in ipairs(matches) do table.insert(names, p.Name) end
+        notify(label, "Ambiguous: "..table.concat(names, ", "), 3)
+    else
+        notify(label, '"'..text..'" not found', 2)
+    end
+    AimbotSettings.StickyTarget = nil
+end
+
+local function handleWhitelistRemove(text, whitelist, label)
+    text = text:match("^%s*(.-)%s*$")
+    if text == "" then return end
+    local textLower = text:lower()
+
+    local resolvedKeys = {}
+    local resolvedName = text
+    local matches = findPlayersByPrefix(text)
+    if #matches == 1 then
+        local plr = matches[1]
+        resolvedName = plr.Name
+        table.insert(resolvedKeys, plr.Name)
+        table.insert(resolvedKeys, plr.DisplayName)
+    elseif #matches > 1 then
+        local names = {}
+        for _, p in ipairs(matches) do table.insert(names, p.Name) end
+        notify(label, "Ambiguous: "..table.concat(names, ", "), 3)
+        return
+    else
+        table.insert(resolvedKeys, text)
+    end
+
+    local toDelete = {}
+    for entry in pairs(whitelist) do
+        local eLower = entry:lower()
+        for _, rk in ipairs(resolvedKeys) do
+            if eLower == rk:lower() then
+                table.insert(toDelete, entry); break
+            end
+        end
+        if eLower:sub(1, #textLower) == textLower then
+            local already = false
+            for _, d in ipairs(toDelete) do if d == entry then already=true; break end end
+            if not already then table.insert(toDelete, entry) end
+        end
+    end
+
+    if #toDelete == 0 then
+        notify(label, '"'..resolvedName..'" not found in whitelist', 2)
+        return
+    end
+
+    for _, key in ipairs(toDelete) do whitelist[key] = nil end
+    AimbotSettings.StickyTarget = nil
+    notify(label, resolvedName.." removed", 2)
+end
+
 
 local function GetClosest(fov, part, whitelist, ignoreKO)
     local closest, best = nil, fov
@@ -147,7 +247,6 @@ local function matchesBind(inp, bind)
     return false
 end
 
-
 local function matchesMenuBind(inp, bind)
     if not bind then return false end
     if bind.type ~= "key" then return false end
@@ -156,7 +255,6 @@ local function matchesMenuBind(inp, bind)
     if bind.value == Enum.KeyCode.Unknown then return false end
     return true
 end
-
 
 local mouse = LocalPlayer:GetMouse()
 
@@ -243,14 +341,17 @@ RunService.RenderStepped:Connect(function()
     local target = nil
     if AimbotSettings.Sticky and AimbotSettings.StickyTarget then
         local sc = AimbotSettings.StickyTarget
-        if AimbotSettings.Whitelist[sc.Name] then AimbotSettings.StickyTarget=nil
+        if matchesWhitelist(AimbotSettings.Whitelist, sc) then
+            AimbotSettings.StickyTarget=nil
+        elseif AimbotSettings.IgnoreKO and isKO(sc) then
+            AimbotSettings.StickyTarget=nil
         else
             local hum = sc.Character and sc.Character:FindFirstChildOfClass("Humanoid")
             if hum and hum.Health>0 then target=sc else AimbotSettings.StickyTarget=nil end
         end
     end
     if not target then
-        target = GetClosest(AimbotSettings.FOV, AimbotSettings.TargetPart, AimbotSettings.Whitelist, false)
+        target = GetClosest(AimbotSettings.FOV, AimbotSettings.TargetPart, AimbotSettings.Whitelist, AimbotSettings.IgnoreKO)
         if AimbotSettings.Sticky and target then AimbotSettings.StickyTarget=target end
     end
     if not (target and target.Character) then return end
@@ -488,7 +589,6 @@ local function createESP(plr)
 end
 
 local function destroyESPEntry(d)
-    
     for _,v in pairs(d.box) do pcall(function() v:Remove() end) end
     pcall(function() d.healthBar.bg:Remove() end)
     pcall(function() d.healthBar.bar:Remove() end)
@@ -496,9 +596,7 @@ local function destroyESPEntry(d)
     pcall(function() d.distance:Remove() end)
     pcall(function() d.tracer:Remove() end)
     for _,l in ipairs(d.skeleton) do pcall(function() l:Remove() end) end
-    
     if d.highlight and d.highlight.Parent then d.highlight:Destroy(); d.highlight=nil end
-    
     for _,inst in ipairs(d.chams) do
         if inst and inst.Parent then inst:Destroy() end
     end
@@ -639,11 +737,9 @@ Players.PlayerAdded:Connect(onPlayerAdded)
 Players.PlayerRemoving:Connect(removeESP)
 
 RunService.RenderStepped:Connect(function()
-    
     if not ESPSettings.Enabled or _hidden then
         for _,d in pairs(playerESP) do
             hideESP(d)
-            
             if not ESPSettings.Highlight then
                 if d.highlight and d.highlight.Parent then d.highlight:Destroy(); d.highlight=nil end
             end
@@ -658,53 +754,44 @@ RunService.RenderStepped:Connect(function()
 end)
 
 
-local Window = KraviX:CreateWindow({
+Window = KraviX:CreateWindow({
     Name = "Da Hood",
     Url  = "discord.gg/fDdwWjz8yk",
 })
 
-
 local function fullUnload()
-    
-    AimbotSettings.Enabled  = false; _aimBindState=false; AimbotSettings.StickyTarget=nil
-    SilentAimSettings.Enabled= false; _removeGunHandlerHook()
-    RapidFireSettings.Enabled= false; _isFiring=false
-    TriggerSettings.Enabled  = false; TriggerSettings.Active=false
+    AimbotSettings.Enabled   = false; _aimBindState=false; AimbotSettings.StickyTarget=nil
+    SilentAimSettings.Enabled = false; _removeGunHandlerHook()
+    RapidFireSettings.Enabled = false; _isFiring=false
+    TriggerSettings.Enabled   = false; TriggerSettings.Active=false
     SpeedSettings.Enabled    = false; SpeedSettings.KeybindActive=false
     FlySettings.Enabled      = false; _flyToggled=false; stopFly()
     _hidden = false
 
-    
     local char=LocalPlayer.Character
     local hum=char and char:FindFirstChildOfClass("Humanoid")
     if hum then hum.WalkSpeed=16; hum.PlatformStand=false end
 
-    
     ESPSettings.Enabled  = false
     ESPSettings.Highlight= false
     ESPSettings.Chams    = false
 
-    
     for plr, d in pairs(playerESP) do
         destroyESPEntry(d)
         playerESP[plr] = nil
     end
-    
     playerESP = {}
 
-    
     pcall(function()
         if espFolder and espFolder.Parent then espFolder:Destroy() end
     end)
 
-    
     AimbotCircle.Visible = false
     SilentCircle.Visible = false
     for _,l in ipairs({TriggerBoxTop,TriggerBoxBot,TriggerBoxLeft,TriggerBoxRight}) do
         l.Visible = false
     end
 
-    
     task.wait(0.1)
     if Window._ScreenGui and Window._ScreenGui.Parent then
         pcall(function() Window._ScreenGui:Destroy() end)
@@ -732,6 +819,9 @@ _aimBindObj = secAimbot:AddMouseKeybind({
 secAimbot:AddToggle({Name="Sticky Target",Default=false,Callback=function(v)
     AimbotSettings.Sticky=v; if not v then AimbotSettings.StickyTarget=nil end
 end})
+secAimbot:AddToggle({Name="Ignore K.O Players",Default=false,Callback=function(v)
+    AimbotSettings.IgnoreKO=v; AimbotSettings.StickyTarget=nil
+end})
 secAimbot:AddSeparator()
 secAimbot:AddToggle({Name="Prediction",Description="Anticipates target movement based on velocity",Default=false,
     Callback=function(v) AimbotSettings.PredictEnabled=v end})
@@ -742,35 +832,15 @@ secAimbot:AddToggle({Name="Show FOV Circle",Default=false,Callback=function(v) A
 secAimbot:AddColorPicker({Name="FOV Color",Default=Color3.fromRGB(255,255,255),
     Callback=function(v) AimbotSettings.FOVColor=v end})
 secAimbot:AddSeparator()
-secAimbot:AddLabel({Text="Aimbot Whitelist — ignores these players:"})
-secAimbot:AddTextbox({Name="Add/Remove",Placeholder="Player name or display name",Callback=function(name)
-    name=name:match("^%s*(.-)%s*$"); if name=="" then return end
-    local nameLower = name:lower()
-    local existing = nil
-    for entry in pairs(AimbotSettings.Whitelist) do
-        local e = entry:lower()
-        if e == nameLower or e:sub(1,#nameLower) == nameLower or nameLower:sub(1,#e) == e then
-            existing=entry; break
-        end
-    end
-    if existing then
-        AimbotSettings.Whitelist[existing]=nil
-        Window.Notify("Aimbot WL",existing.." removed",2)
-        if AimbotSettings.StickyTarget and matchesWhitelist(AimbotSettings.Whitelist, AimbotSettings.StickyTarget) then
-            AimbotSettings.StickyTarget=nil
-        end
-        return
-    end
-    local resolved = name
-    for _, plr in ipairs(Players:GetPlayers()) do
-        if plr.Name:lower():sub(1,#nameLower)==nameLower
-        or plr.DisplayName:lower():sub(1,#nameLower)==nameLower then
-            resolved = plr.Name; break
-        end
-    end
-    AimbotSettings.Whitelist[resolved]=true
-    Window.Notify("Aimbot WL",resolved.." added",2)
+secAimbot:AddLabel({Text="Aimbot Whitelist — Add (prefix accepted):"})
+secAimbot:AddTextbox({Name="Add",Placeholder="Name or start of name",Callback=function(name)
+    handleWhitelistAdd(name, AimbotSettings.Whitelist, "Aimbot WL")
 end})
+secAimbot:AddLabel({Text="Aimbot Whitelist — Remove:"})
+secAimbot:AddTextbox({Name="Remove",Placeholder="Exact name or prefix",Callback=function(name)
+    handleWhitelistRemove(name, AimbotSettings.Whitelist, "Aimbot WL")
+end})
+
 
 local secRight = TabAimbot:AddSection("Silent Aim","Right")
 secRight:AddToggle({Name="Enable Silent Aim",Default=false,Callback=function(v)
@@ -793,31 +863,13 @@ secRight:AddToggle({Name="Show FOV Circle",Default=false,Callback=function(v) Si
 secRight:AddColorPicker({Name="FOV Color",Default=Color3.fromRGB(255,255,255),
     Callback=function(v) SilentAimSettings.FOVColor=v end})
 secRight:AddSeparator()
-secRight:AddLabel({Text="Silent Whitelist — ignores these players:"})
-secRight:AddTextbox({Name="Add/Remove",Placeholder="Player name or display name",Callback=function(name)
-    name=name:match("^%s*(.-)%s*$"); if name=="" then return end
-    local nameLower = name:lower()
-    local existing = nil
-    for entry in pairs(SilentAimSettings.Whitelist) do
-        local e = entry:lower()
-        if e == nameLower or e:sub(1,#nameLower) == nameLower or nameLower:sub(1,#e) == e then
-            existing=entry; break
-        end
-    end
-    if existing then
-        SilentAimSettings.Whitelist[existing]=nil
-        Window.Notify("Silent WL",existing.." removed",2)
-        return
-    end
-    local resolved = name
-    for _, plr in ipairs(Players:GetPlayers()) do
-        if plr.Name:lower():sub(1,#nameLower)==nameLower
-        or plr.DisplayName:lower():sub(1,#nameLower)==nameLower then
-            resolved = plr.Name; break
-        end
-    end
-    SilentAimSettings.Whitelist[resolved]=true
-    Window.Notify("Silent WL",resolved.." added",2)
+secRight:AddLabel({Text="Silent Whitelist — Add (prefix accepted):"})
+secRight:AddTextbox({Name="Add",Placeholder="Name or start of name",Callback=function(name)
+    handleWhitelistAdd(name, SilentAimSettings.Whitelist, "Silent WL")
+end})
+secRight:AddLabel({Text="Silent Whitelist — Remove:"})
+secRight:AddTextbox({Name="Remove",Placeholder="Exact name or prefix",Callback=function(name)
+    handleWhitelistRemove(name, SilentAimSettings.Whitelist, "Silent WL")
 end})
 secRight:AddSeparator()
 secRight:AddToggle({Name="Rapid Fire",Default=false,
@@ -991,8 +1043,7 @@ end)
 
 local secUtil = TabMisc:AddSection("Utility","Right")
 
-
-secUtil:AddLabel({Text="Menu key — keyboard only, no default:"})
+secUtil:AddLabel({Text="Menu key — keyboard only:"})
 local _menuBindObj = secUtil:AddMouseKeybind({
     Name    = "Menu Toggle Key",
     Default = {type="key", value=Enum.KeyCode.RightControl},
@@ -1003,13 +1054,10 @@ secUtil:AddLabel({Text="Click above and press a KEY to set. Mouse buttons are NO
 UserInputService.InputBegan:Connect(function(inp, proc)
     if proc then return end
     if inp.UserInputType ~= Enum.UserInputType.Keyboard then return end
-    if matchesMenuBind(inp, _menuBindObj.Value) then
-        Window.ToggleWindow()
-    end
+    if matchesMenuBind(inp, _menuBindObj.Value) then Window.ToggleWindow() end
 end)
 
 secUtil:AddSeparator()
-
 
 local _hideBindObj = secUtil:AddMouseKeybind({
     Name    = "Hide Visuals Key",
@@ -1024,7 +1072,6 @@ UserInputService.InputBegan:Connect(function(inp, proc)
 end)
 
 secUtil:AddSeparator()
-
 
 secUtil:AddLabel({Text="Unload key — disables everything and closes UI:"})
 local _unloadBindObj = secUtil:AddMouseKeybind({
