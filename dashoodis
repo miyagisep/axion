@@ -10,6 +10,13 @@ local LocalPlayer      = Players.LocalPlayer
 local Camera           = workspace.CurrentCamera
 
 
+local Window  
+local function notify(title, msg, duration)
+    if Window and Window.Notify then
+        Window.Notify(title, msg, duration)
+    end
+end
+
 local AimbotSettings = {
     Enabled=false, FOV=100, ShowFOV=false,
     FOVColor=Color3.fromRGB(255,255,255), Smoothness=1,
@@ -19,11 +26,18 @@ local AimbotSettings = {
     Whitelist={},
 }
 local SilentAimSettings = {
-    Enabled=false, FOV=150, ShowFOV=false,
+    Enabled=false,
+    Part="HumanoidRootPart",
+    KOCheck=false,
+    WallCheck=false,
+    Prediction=0,
+    PredictEnabled=false,
+    HitChance=100,
+    FOV=150,
+    ShowFOV=false,
     FOVColor=Color3.fromRGB(255,255,255),
-    TargetPart="Head", HitChance=100,
-    PredictEnabled=false, PredictAmount=0.15,
-    IgnoreKO=false, WallCheck=false, Whitelist={},
+    Whitelist={},
+    Fov={ Radius=150, Visible=false, Filled=false, Transparency=1 },
 }
 local RapidFireSettings = { Enabled=false }
 local TriggerSettings = {
@@ -42,14 +56,14 @@ local AimbotCircle = Drawing.new("Circle")
 AimbotCircle.Thickness=2; AimbotCircle.NumSides=64; AimbotCircle.Filled=false; AimbotCircle.Visible=false
 
 local SilentCircle = Drawing.new("Circle")
-SilentCircle.Thickness=2; SilentCircle.NumSides=64; SilentCircle.Filled=false; SilentCircle.Visible=false
+SilentCircle.Thickness=2.5; SilentCircle.NumSides=100; SilentCircle.Filled=false; SilentCircle.Visible=false
+SilentCircle.Color=Color3.fromRGB(255,255,255); SilentCircle.Transparency=1
 
 local TriggerBoxTop=Drawing.new("Line"); local TriggerBoxBot=Drawing.new("Line")
 local TriggerBoxLeft=Drawing.new("Line"); local TriggerBoxRight=Drawing.new("Line")
 for _,l in ipairs({TriggerBoxTop,TriggerBoxBot,TriggerBoxLeft,TriggerBoxRight}) do
     l.Thickness=1.5; l.Visible=false; l.ZIndex=5
 end
-
 
 local _aimBindState = false
 local _aimMode      = "Hold"
@@ -85,16 +99,14 @@ local function matchesWhitelist(whitelist, plr)
     if not whitelist then return false end
     local nameLower    = plr.Name:lower()
     local displayLower = plr.DisplayName:lower()
-    for entry, _ in pairs(whitelist) do
+    for entry in pairs(whitelist) do
         local e = entry:lower()
-        
         if nameLower == e or displayLower == e then
             return true
         end
     end
     return false
 end
-
 
 local function findPlayersByPrefix(prefix)
     local p = prefix:lower()
@@ -108,12 +120,91 @@ local function findPlayersByPrefix(prefix)
     return found
 end
 
+local function handleWhitelistAdd(text, whitelist, label)
+    text = text:match("^%s*(.-)%s*$")
+    if text == "" then return end
+    local textLower = text:lower()
+
+    local existingKey = nil
+    for entry in pairs(whitelist) do
+        if entry:lower() == textLower then existingKey = entry; break end
+    end
+    if existingKey then
+        whitelist[existingKey] = nil
+        notify(label, existingKey.." removed", 2)
+        AimbotSettings.StickyTarget = nil
+        return
+    end
+
+    local matches = findPlayersByPrefix(text)
+    if #matches == 1 then
+        local plr = matches[1]
+        whitelist[plr.Name] = true
+        whitelist[plr.DisplayName] = true
+        notify(label, plr.Name.." added", 2)
+    elseif #matches > 1 then
+        local names = {}
+        for _, p in ipairs(matches) do table.insert(names, p.Name) end
+        notify(label, "Ambiguous: "..table.concat(names, ", "), 3)
+    else
+        notify(label, '"'..text..'" not found', 2)
+    end
+    AimbotSettings.StickyTarget = nil
+end
+
+local function handleWhitelistRemove(text, whitelist, label)
+    text = text:match("^%s*(.-)%s*$")
+    if text == "" then return end
+    local textLower = text:lower()
+
+    local resolvedKeys = {}
+    local resolvedName = text
+    local matches = findPlayersByPrefix(text)
+    if #matches == 1 then
+        local plr = matches[1]
+        resolvedName = plr.Name
+        table.insert(resolvedKeys, plr.Name)
+        table.insert(resolvedKeys, plr.DisplayName)
+    elseif #matches > 1 then
+        local names = {}
+        for _, p in ipairs(matches) do table.insert(names, p.Name) end
+        notify(label, "Ambiguous: "..table.concat(names, ", "), 3)
+        return
+    else
+        table.insert(resolvedKeys, text)
+    end
+
+    local toDelete = {}
+    for entry in pairs(whitelist) do
+        local eLower = entry:lower()
+        for _, rk in ipairs(resolvedKeys) do
+            if eLower == rk:lower() then
+                table.insert(toDelete, entry); break
+            end
+        end
+        if eLower:sub(1, #textLower) == textLower then
+            local already = false
+            for _, d in ipairs(toDelete) do if d == entry then already=true; break end end
+            if not already then table.insert(toDelete, entry) end
+        end
+    end
+
+    if #toDelete == 0 then
+        notify(label, '"'..resolvedName..'" not found in whitelist', 2)
+        return
+    end
+
+    for _, key in ipairs(toDelete) do whitelist[key] = nil end
+    AimbotSettings.StickyTarget = nil
+    notify(label, resolvedName.." removed", 2)
+end
+
+
 local function GetClosest(fov, part, whitelist, ignoreKO)
     local closest, best = nil, fov
     local center = Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2)
     for _, plr in ipairs(Players:GetPlayers()) do
         if plr ~= LocalPlayer and plr.Character then
-            
             if matchesWhitelist(whitelist, plr) then continue end
             local hum = plr.Character:FindFirstChildOfClass("Humanoid")
             if hum and hum.Health > 0 then
@@ -154,12 +245,10 @@ end
 local function matchesBind(inp, bind)
     if not bind then return false end
     if bind.type == "mouse" then
-        if inp.UserInputType ~= bind.value then return false end
-        return true
+        return inp.UserInputType == bind.value
     elseif bind.type == "key" then
         if inp.UserInputType ~= Enum.UserInputType.Keyboard then return false end
-        if inp.KeyCode ~= bind.value then return false end
-        return true
+        return inp.KeyCode == bind.value
     end
     return false
 end
@@ -172,7 +261,6 @@ local function matchesMenuBind(inp, bind)
     if bind.value == Enum.KeyCode.Unknown then return false end
     return true
 end
-
 
 local mouse = LocalPlayer:GetMouse()
 
@@ -249,9 +337,11 @@ RunService.RenderStepped:Connect(function()
     AimbotCircle.Position=center; AimbotCircle.Radius=AimbotSettings.FOV
     AimbotCircle.Color=AimbotSettings.FOVColor
     AimbotCircle.Visible=AimbotSettings.ShowFOV and AimbotSettings.Enabled and not _hidden
-    SilentCircle.Position=center; SilentCircle.Radius=SilentAimSettings.FOV
+    SilentCircle.Position=center; SilentCircle.Radius=SilentAimSettings.Fov.Radius
     SilentCircle.Color=SilentAimSettings.FOVColor
-    SilentCircle.Visible=SilentAimSettings.ShowFOV and SilentAimSettings.Enabled and not _hidden
+    SilentCircle.Filled=SilentAimSettings.Fov.Filled
+    SilentCircle.Transparency=SilentAimSettings.Fov.Transparency
+    SilentCircle.Visible=SilentAimSettings.Fov.Visible and SilentAimSettings.Enabled and not _hidden
 
     if not (AimbotSettings.Enabled and _aimBindState) then
         if not AimbotSettings.Sticky then AimbotSettings.StickyTarget=nil end; return
@@ -289,71 +379,72 @@ local function isAimInput(inp)
 end
 
 
-local ReplicatedStorage   = game:GetService("ReplicatedStorage")
-local GunHandler          = require(ReplicatedStorage.Modules.GunHandler)
-local _originalGetAim     = GunHandler.getAim
+local function silentIsKO(plr)
+    if not (plr and plr.Character and SilentAimSettings.KOCheck) then return false end
+    local be = plr.Character:FindFirstChild("BodyEffects"); if not be then return false end
+    if be:FindFirstChild("K.O") then return be["K.O"].Value end
+    if be:FindFirstChild("KO")  then return be.KO.Value end
+    return false
+end
 
-local function _silentGetNearest()
-    local best, target = math.huge, nil
+local function silentIsVisible(plr)
+    if not SilentAimSettings.WallCheck then return true end
+    local char = plr.Character
+    if not char or not char:FindFirstChild("HumanoidRootPart") then return false end
+    local hrp  = char.HumanoidRootPart
+    local orig = Camera.CFrame.Position
+    local dir  = hrp.Position - orig
+    return not workspace:FindPartOnRay(Ray.new(orig, dir.Unit * dir.Magnitude), char)
+end
+
+local function silentGetNearest()
+    if not SilentAimSettings.Enabled then return nil end
+    local radius = SilentAimSettings.Fov.Radius
     local center = Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2)
-    local rayParams = RaycastParams.new()
-    rayParams.FilterType = Enum.RaycastFilterType.Exclude
+    local best, found = radius, nil
     for _, plr in pairs(Players:GetPlayers()) do
         if plr == LocalPlayer or not plr.Character then continue end
+        if not plr.Character:FindFirstChild(SilentAimSettings.Part) then continue end
         if matchesWhitelist(SilentAimSettings.Whitelist, plr) then continue end
-        local part = getPart(plr.Character, SilentAimSettings.TargetPart)
-        if not part then continue end
-        if SilentAimSettings.IgnoreKO and isKO(plr) then continue end
-        local hum = plr.Character:FindFirstChildOfClass("Humanoid")
-        if not hum or hum.Health <= 0 then continue end
-        local sp, on = Camera:WorldToViewportPoint(part.Position)
+        if silentIsKO(plr) then continue end
+        if not silentIsVisible(plr) then continue end
+        local sp, on = Camera:WorldToScreenPoint(plr.Character[SilentAimSettings.Part].Position)
         if not on then continue end
         local d = (Vector2.new(sp.X, sp.Y) - center).Magnitude
-        if d <= SilentAimSettings.FOV and d < best then
-            if SilentAimSettings.WallCheck then
-                local char = LocalPlayer.Character
-                local hrp  = char and char:FindFirstChild("HumanoidRootPart")
-                if hrp then
-                    rayParams.FilterDescendantsInstances = {char, plr.Character}
-                    local origin = hrp.Position
-                    local dir    = part.Position - origin
-                    local result = workspace:Raycast(origin, dir, rayParams)
-                    if result then continue end
-                end
-            end
-            best = d; target = part
-        end
+        if d < best then best=d; found=plr end
     end
-    return target
+    return found
 end
 
-local function _applyGunHandlerHook()
-    GunHandler.getAim = function(origin, range)
-        if SilentAimSettings.Enabled then
-            if math.random(1,100) <= SilentAimSettings.HitChance then
-                local target = _silentGetNearest()
-                if target and target.Parent then
-                    local pos = SilentAimSettings.PredictEnabled
-                        and getPredictedPos(target.Parent, SilentAimSettings.TargetPart, SilentAimSettings.PredictAmount)
-                        or target.Position
-                    if pos then
-                        local dir = (pos - origin)
-                        if dir.Magnitude > 0.001 then
-                            return dir.Unit, range
-                        end
+local _rawmt = getrawmetatable(game)
+setreadonly(_rawmt, false)
+local _origIndex = _rawmt.__index
+_rawmt.__index = function(self, key)
+    if not checkcaller() and (self == mouse and SilentAimSettings.Enabled) then
+        if math.random(1,100) <= SilentAimSettings.HitChance then
+            if key == "Hit" then
+                local t = silentGetNearest()
+                if t and t.Character and t.Character:FindFirstChild(SilentAimSettings.Part) then
+                    local part = t.Character[SilentAimSettings.Part]
+                    local pos
+                    if SilentAimSettings.PredictEnabled then
+                        pos = part.Position + part.Velocity * SilentAimSettings.Prediction
+                    else
+                        pos = part.Position
                     end
+                    return CFrame.new(pos)
+                end
+            elseif key == "Target" and game.PlaceId == 9825515356 then
+                local t = silentGetNearest()
+                if t and t.Character and t.Character:FindFirstChild(SilentAimSettings.Part) then
+                    return t.Character[SilentAimSettings.Part]
                 end
             end
         end
-        local ok, a, b = pcall(_originalGetAim, origin, range)
-        if ok and a then return a, b end
-        return Camera.CFrame.LookVector, range
     end
+    return _origIndex(self, key)
 end
-
-local function _removeGunHandlerHook()
-    GunHandler.getAim = _originalGetAim
-end
+setreadonly(_rawmt, true)
 
 
 local _isFiring = false
@@ -661,17 +752,16 @@ RunService.RenderStepped:Connect(function()
 end)
 
 
-local Window = KraviX:CreateWindow({
-    Name = "Das Hood",
+Window = KraviX:CreateWindow({
+    Name = "Hood Customs",
     Url  = "discord.gg/fDdwWjz8yk",
 })
 
-
 local function fullUnload()
-    AimbotSettings.Enabled  = false; _aimBindState=false; AimbotSettings.StickyTarget=nil
-    SilentAimSettings.Enabled= false; _removeGunHandlerHook()
-    RapidFireSettings.Enabled= false; _isFiring=false
-    TriggerSettings.Enabled  = false; TriggerSettings.Active=false
+    AimbotSettings.Enabled   = false; _aimBindState=false; AimbotSettings.StickyTarget=nil
+    SilentAimSettings.Enabled = false
+    RapidFireSettings.Enabled = false; _isFiring=false
+    TriggerSettings.Enabled   = false; TriggerSettings.Active=false
     SpeedSettings.Enabled    = false; SpeedSettings.KeybindActive=false
     FlySettings.Enabled      = false; _flyToggled=false; stopFly()
     _hidden = false
@@ -707,97 +797,6 @@ local function fullUnload()
 end
 
 
-
-local function handleWhitelistInput(text, whitelist, label)
-    text = text:match("^%s*(.-)%s*$")
-    if text == "" then return end
-    local textLower = text:lower()
-
-    
-    local existingKey = nil
-    for entry, _ in pairs(whitelist) do
-        if entry:lower() == textLower then existingKey = entry; break end
-    end
-    if existingKey then
-        whitelist[existingKey] = nil
-        Window.Notify(label, existingKey.." removed", 2)
-        AimbotSettings.StickyTarget = nil
-        return
-    end
-
-    
-    local matches = findPlayersByPrefix(text)
-    if #matches == 1 then
-        local plr = matches[1]
-        whitelist[plr.Name] = true
-        whitelist[plr.DisplayName] = true
-        Window.Notify(label, plr.Name.." added", 2)
-    elseif #matches > 1 then
-        local names = {}
-        for _, p in ipairs(matches) do table.insert(names, p.Name) end
-        Window.Notify(label, "Ambiguous: "..table.concat(names, ", "), 3)
-    else
-        
-        whitelist[text] = true
-        Window.Notify(label, text.." added (offline)", 2)
-    end
-    AimbotSettings.StickyTarget = nil
-end
-
-local function handleWhitelistRemove(text, whitelist, label)
-    text = text:match("^%s*(.-)%s*$")
-    if text == "" then return end
-    local textLower = text:lower()
-
-    
-    local resolvedKeys = {}
-    local resolvedName = text  
-    local matches = findPlayersByPrefix(text)
-    if #matches == 1 then
-        local plr = matches[1]
-        resolvedName = plr.Name  
-        table.insert(resolvedKeys, plr.Name)
-        table.insert(resolvedKeys, plr.DisplayName)
-    elseif #matches > 1 then
-        local names = {}
-        for _, p in ipairs(matches) do table.insert(names, p.Name) end
-        Window.Notify(label, "Ambiguous: "..table.concat(names, ", "), 3)
-        return
-    else
-        
-        table.insert(resolvedKeys, text)
-    end
-
-    
-    local toDelete = {}
-    for entry, _ in pairs(whitelist) do
-        local eLower = entry:lower()
-        for _, rk in ipairs(resolvedKeys) do
-            if eLower == rk:lower() then
-                table.insert(toDelete, entry); break
-            end
-        end
-        
-        if eLower:sub(1, #textLower) == textLower then
-            local already = false
-            for _, d in ipairs(toDelete) do if d == entry then already=true; break end end
-            if not already then table.insert(toDelete, entry) end
-        end
-    end
-
-    if #toDelete == 0 then
-        Window.Notify(label, '"'..resolvedName..'" not found in whitelist', 2)
-        return
-    end
-
-    for _, key in ipairs(toDelete) do whitelist[key] = nil end
-    AimbotSettings.StickyTarget = nil
-    
-    Window.Notify(label, resolvedName.." removed", 2)
-end
-
-
-
 local TabAimbot = Window:CreateTab("Aimbot")
 local secAimbot = TabAimbot:AddSection("Aimbot","Left")
 
@@ -816,7 +815,6 @@ _aimBindObj = secAimbot:AddMouseKeybind({
     Callback=function() _aimBindState=false; AimbotSettings.StickyTarget=nil end
 })
 
-
 UserInputService.InputBegan:Connect(function(inp, proc)
     if proc or not AimbotSettings.Enabled then return end
     if not isAimInput(inp) then return end
@@ -834,6 +832,7 @@ UserInputService.InputEnded:Connect(function(inp)
     _aimBindState = false
     AimbotSettings.StickyTarget = nil
 end)
+
 secAimbot:AddToggle({Name="Sticky Target",Default=false,Callback=function(v)
     AimbotSettings.Sticky=v; if not v then AimbotSettings.StickyTarget=nil end
 end})
@@ -843,7 +842,7 @@ end})
 secAimbot:AddSeparator()
 secAimbot:AddToggle({Name="Prediction",Default=false,
     Callback=function(v) AimbotSettings.PredictEnabled=v end})
-secAimbot:AddSlider({Name="Predict Amount",Min=0.01,Max=0.5,Default=0.15,Rounding=2,
+secAimbot:AddSlider({Name="Predict Amount",Min=0.01,Max=5,Default=0.15,Rounding=2,
     Callback=function(v) AimbotSettings.PredictAmount=v end})
 secAimbot:AddSeparator()
 secAimbot:AddToggle({Name="Show FOV Circle",Default=false,Callback=function(v) AimbotSettings.ShowFOV=v end})
@@ -852,7 +851,7 @@ secAimbot:AddColorPicker({Name="FOV Color",Default=Color3.fromRGB(255,255,255),
 secAimbot:AddSeparator()
 secAimbot:AddLabel({Text="Aimbot Whitelist — Add (prefix accepted):"})
 secAimbot:AddTextbox({Name="Add",Placeholder="Name or start of name",Callback=function(name)
-    handleWhitelistInput(name, AimbotSettings.Whitelist, "Aimbot WL")
+    handleWhitelistAdd(name, AimbotSettings.Whitelist, "Aimbot WL")
 end})
 secAimbot:AddLabel({Text="Aimbot Whitelist — Remove:"})
 secAimbot:AddTextbox({Name="Remove",Placeholder="Exact name or prefix",Callback=function(name)
@@ -863,27 +862,34 @@ end})
 local secRight = TabAimbot:AddSection("Silent Aim","Right")
 secRight:AddToggle({Name="Enable Silent Aim",Default=false,Callback=function(v)
     SilentAimSettings.Enabled=v
-    if v then _applyGunHandlerHook() else _removeGunHandlerHook() end
 end})
-secRight:AddSlider({Name="FOV",Min=20,Max=1000,Default=150,Rounding=0,Callback=function(v) SilentAimSettings.FOV=v end})
+secRight:AddSlider({Name="FOV",Min=0,Max=1000,Default=150,Rounding=0,Callback=function(v)
+    SilentAimSettings.Fov.Radius=v
+end})
 secRight:AddSlider({Name="Hit Chance (%)",Min=1,Max=100,Default=100,Rounding=0,
     Callback=function(v) SilentAimSettings.HitChance=v end})
-secRight:AddDropdown({Name="Target Part",Values={"Head","HumanoidRootPart","UpperTorso","Torso"},Default="Head",
-    Callback=function(v) SilentAimSettings.TargetPart=v end})
-secRight:AddToggle({Name="Ignore K.O Players",Default=false,Callback=function(v) SilentAimSettings.IgnoreKO=v end})
-secRight:AddToggle({Name="Wall Check",Default=false,Callback=function(v) SilentAimSettings.WallCheck=v end})
+secRight:AddDropdown({Name="Hit Part",Values={"Head","HumanoidRootPart","UpperTorso","LowerTorso"},Default="HumanoidRootPart",
+    Callback=function(v) SilentAimSettings.Part=v end})
+secRight:AddToggle({Name="Prediction",Default=false,
+    Callback=function(v) SilentAimSettings.PredictEnabled=v end})
+secRight:AddSlider({Name="Predict Amount",Min=0,Max=5,Default=0,Rounding=2,
+    Callback=function(v) SilentAimSettings.Prediction=v end})
 secRight:AddSeparator()
-secRight:AddToggle({Name="Prediction",Default=false,Callback=function(v) SilentAimSettings.PredictEnabled=v end})
-secRight:AddSlider({Name="Predict Amount",Min=0.01,Max=0.5,Default=0.15,Rounding=2,
-    Callback=function(v) SilentAimSettings.PredictAmount=v end})
-secRight:AddSeparator()
-secRight:AddToggle({Name="Show FOV Circle",Default=false,Callback=function(v) SilentAimSettings.ShowFOV=v end})
+secRight:AddToggle({Name="Show FOV",Default=false,Callback=function(v)
+    SilentAimSettings.Fov.Visible=v
+end})
+secRight:AddToggle({Name="Filled",Default=false,Callback=function(v)
+    SilentAimSettings.Fov.Filled=v
+end})
 secRight:AddColorPicker({Name="FOV Color",Default=Color3.fromRGB(255,255,255),
-    Callback=function(v) SilentAimSettings.FOVColor=v end})
+    Callback=function(v) SilentAimSettings.FOVColor=v; SilentCircle.Color=v end})
+secRight:AddSeparator()
+secRight:AddToggle({Name="KO Check",Default=false,Callback=function(v) SilentAimSettings.KOCheck=v end})
+secRight:AddToggle({Name="Wall Check",Default=false,Callback=function(v) SilentAimSettings.WallCheck=v end})
 secRight:AddSeparator()
 secRight:AddLabel({Text="Silent Whitelist — Add (prefix accepted):"})
 secRight:AddTextbox({Name="Add",Placeholder="Name or start of name",Callback=function(name)
-    handleWhitelistInput(name, SilentAimSettings.Whitelist, "Silent WL")
+    handleWhitelistAdd(name, SilentAimSettings.Whitelist, "Silent WL")
 end})
 secRight:AddLabel({Text="Silent Whitelist — Remove:"})
 secRight:AddTextbox({Name="Remove",Placeholder="Exact name or prefix",Callback=function(name)
@@ -916,7 +922,6 @@ secRight:AddToggle({Name="Trigger Prediction",Default=false,
     Callback=function(v) TriggerSettings.PredictEnabled=v end})
 secRight:AddSlider({Name="Trigger Predict Amount",Min=0.01,Max=0.5,Default=0.1,Rounding=2,
     Callback=function(v) TriggerSettings.PredictAmount=v end})
-
 
 
 local TabESP = Window:CreateTab("ESP")
@@ -977,7 +982,6 @@ secESPR:AddColorPicker({Name="Chams Color",Default=Color3.fromRGB(255,255,255),
     Callback=function(v) ESPSettings.ChamsColor=v end})
 secESPR:AddSlider({Name="Chams Trans",Min=0,Max=1,Default=0.5,Rounding=2,
     Callback=function(v) ESPSettings.ChamsTrans=v end})
-
 
 
 local TabMisc = Window:CreateTab("Misc")
@@ -1063,7 +1067,7 @@ end)
 
 local secUtil = TabMisc:AddSection("Utility","Right")
 
-secUtil:AddLabel({Text="Menu key — keyboard only, no default:"})
+secUtil:AddLabel({Text="Menu key — keyboard only:"})
 local _menuBindObj = secUtil:AddMouseKeybind({
     Name    = "Menu Toggle Key",
     Default = {type="key", value=Enum.KeyCode.RightControl},
@@ -1074,9 +1078,7 @@ secUtil:AddLabel({Text="Press a KEY to set. Mouse buttons are not accepted."})
 UserInputService.InputBegan:Connect(function(inp, proc)
     if proc then return end
     if inp.UserInputType ~= Enum.UserInputType.Keyboard then return end
-    if matchesMenuBind(inp, _menuBindObj.Value) then
-        Window.ToggleWindow()
-    end
+    if matchesMenuBind(inp, _menuBindObj.Value) then Window.ToggleWindow() end
 end)
 
 secUtil:AddSeparator()
