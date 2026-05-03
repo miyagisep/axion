@@ -5,6 +5,7 @@ local KraviX = loadstring(game:HttpGet(
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
+local TeleportService  = game:GetService("TeleportService")
 local LocalPlayer      = Players.LocalPlayer
 local Camera           = workspace.CurrentCamera
 
@@ -26,13 +27,10 @@ local function matchesMenuBind(inp, bind)
 end
 
 local function getTeam(model)
-    
     local plr = Players:GetPlayerFromCharacter(model)
     if plr and plr.Team then return plr.Team.Name end
-    
     local tv = model:FindFirstChild("Team")
     if tv and tv.Value then return tv.Value end
-    
     local n = model.Name:lower()
     if n:find("red") then return "Red" end
     if n:find("blue") then return "Blue" end
@@ -49,7 +47,6 @@ local function getClosestEnemy(fov)
     local bestModel, bestDist = nil, fov
     local cx = Camera.ViewportSize.X / 2
     local cy = Camera.ViewportSize.Y / 2
-
     for _, model in ipairs(workspace:GetDescendants()) do
         if not model:IsA("Model") then continue end
         local hum = model:FindFirstChildOfClass("Humanoid")
@@ -74,7 +71,6 @@ local function getClosestHeadWallCheck()
     local bestHead, bestDist = nil, math.huge
     local cx = Camera.ViewportSize.X / 2
     local cy = Camera.ViewportSize.Y / 2
-
     for _, model in ipairs(workspace:GetDescendants()) do
         if not model:IsA("Model") then continue end
         local hum = model:FindFirstChildOfClass("Humanoid")
@@ -101,6 +97,26 @@ local function getClosestHeadWallCheck()
 end
 
 
+local function GetPlayerAtCrosshair()
+    local closest, best = nil, math.huge
+    local center = Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2)
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LocalPlayer and plr.Character then
+            local hrp = plr.Character:FindFirstChild("HumanoidRootPart")
+            local hum = plr.Character:FindFirstChildOfClass("Humanoid")
+            if hrp and hum and hum.Health>0 then
+                local sp, on = Camera:WorldToViewportPoint(hrp.Position)
+                if on then
+                    local d = (Vector2.new(sp.X,sp.Y)-center).Magnitude
+                    if d < best then closest=plr; best=d end
+                end
+            end
+        end
+    end
+    return closest
+end
+
+
 local SilentSettings = {
     Enabled    = false,
     FOV        = 50,
@@ -109,7 +125,7 @@ local SilentSettings = {
     TargetPart = "Head",
 }
 
-local SilentCircle    = Drawing.new("Circle")
+local SilentCircle     = Drawing.new("Circle")
 SilentCircle.Thickness = 1.5
 SilentCircle.NumSides  = 64
 SilentCircle.Filled    = false
@@ -150,10 +166,9 @@ local AimbotSettings = {
 local _aimBindState = false
 local _aimMode      = "Hold"
 local _aimBindObj   = nil
+local _hidden       = false
 
-local _hidden = false
-
-local AimbotCircle    = Drawing.new("Circle")
+local AimbotCircle     = Drawing.new("Circle")
 AimbotCircle.Thickness = 1.5
 AimbotCircle.NumSides  = 64
 AimbotCircle.Filled    = false
@@ -226,56 +241,121 @@ local ESPSettings = {
     Names          = true,
     NamesColor     = Color3.fromRGB(255, 255, 255),
     Distance       = true,
+    
+    Skeleton       = false,
+    SkeletonColor  = Color3.fromRGB(255, 255, 255),
+    
+    HeadDot        = false,
+    HeadDotColor   = Color3.fromRGB(255, 80, 80),
+    
     Tracers        = false,
     TracerOrigin   = "Bottom",
     TracerColor    = Color3.fromRGB(255, 255, 255),
+    
     Highlight      = false,
     HLFillColor    = Color3.fromRGB(255, 80, 80),
     HLOutlineColor = Color3.fromRGB(255, 255, 255),
     HLFillTrans    = 0.5,
     HLOutTrans     = 0,
+    
     TeamCheck      = false,
 }
 
-local espFolder = Instance.new("Folder"); espFolder.Name = "CAESPF"; espFolder.Parent = workspace
+local espFolder = Instance.new("Folder")
+espFolder.Name = "CAESPF"
+espFolder.Parent = workspace
 
-local modelESP = {}
 
-local function newLine(t,c) local l=Drawing.new("Line");l.Thickness=t or 1;l.Color=c or Color3.new(1,1,1);l.Visible=false;return l end
+local skeletonBones = {
+    {"Head","UpperTorso"},    {"UpperTorso","LowerTorso"},
+    {"UpperTorso","RightUpperArm"},  {"RightUpperArm","RightLowerArm"},  {"RightLowerArm","RightHand"},
+    {"UpperTorso","LeftUpperArm"},   {"LeftUpperArm","LeftLowerArm"},    {"LeftLowerArm","LeftHand"},
+    {"LowerTorso","RightUpperLeg"},  {"RightUpperLeg","RightLowerLeg"},  {"RightLowerLeg","RightFoot"},
+    {"LowerTorso","LeftUpperLeg"},   {"LeftUpperLeg","LeftLowerLeg"},    {"LeftLowerLeg","LeftFoot"},
+}
+
+
+local function newLine(t, c, z)
+    local l = Drawing.new("Line")
+    l.Thickness = t or 1
+    l.Color     = c or Color3.new(1,1,1)
+    l.Transparency = 1
+    l.ZIndex    = z or 1
+    l.Visible   = false
+    return l
+end
+
+local function newCircleDraw(filled, thickness, sides, z)
+    local ci = Drawing.new("Circle")
+    ci.Filled  = filled or false
+    ci.Thickness = thickness or 1
+    ci.NumSides = sides or 32
+    ci.ZIndex  = z or 1
+    ci.Transparency = 1
+    ci.Visible = false
+    return ci
+end
+
 
 local function makeBillboard(char, name, offsetY, textSize)
     local head = char and char:FindFirstChild("Head")
     if not head then return nil end
     if head:FindFirstChild(name) then head:FindFirstChild(name):Destroy() end
     local bb = Instance.new("BillboardGui")
-    bb.Name = name; bb.AlwaysOnTop = true
-    bb.Size = UDim2.new(0, 140, 0, 20)
+    bb.Name       = name
+    bb.AlwaysOnTop = true
+    bb.Size       = UDim2.new(0, 160, 0, 20)
     bb.StudsOffset = Vector3.new(0, offsetY, 0)
-    bb.Adornee = head; bb.Parent = head
+    bb.Adornee    = head
+    bb.Parent     = head
     local lbl = Instance.new("TextLabel", bb)
-    lbl.Size = UDim2.new(1,0,1,0); lbl.BackgroundTransparency = 1
-    lbl.TextColor3 = Color3.new(1,1,1); lbl.TextStrokeTransparency = 0
+    lbl.Size = UDim2.new(1,0,1,0)
+    lbl.BackgroundTransparency = 1
+    lbl.TextColor3 = Color3.new(1,1,1)
+    lbl.TextStrokeTransparency = 0
     lbl.TextStrokeColor3 = Color3.new(0,0,0)
-    lbl.Font = Enum.Font.GothamBold; lbl.TextSize = textSize or 13; lbl.Text = ""
+    lbl.Font = Enum.Font.GothamBold
+    lbl.TextSize = textSize or 13
+    lbl.Text = ""
     return bb
 end
 
+
+local modelESP = {}
+
 local function createESPForModel(model)
     if modelESP[model] then return end
+    local skeleLines = {}
+    for i = 1, #skeletonBones do
+        skeleLines[i] = newLine(1, Color3.new(1,1,1), 2)
+    end
     modelESP[model] = {
-        box    = {top=newLine(1),bottom=newLine(1),left=newLine(1),right=newLine(1)},
-        hpBg   = newLine(4, Color3.new(0,0,0)),
-        hpBar  = newLine(2, Color3.fromRGB(0,255,0)),
-        tracer = newLine(1),
-        bb=nil, bbDist=nil, hl=nil,
+        box     = {
+            top    = newLine(1),
+            bottom = newLine(1),
+            left   = newLine(1),
+            right  = newLine(1),
+        },
+        hpBg     = newLine(4, Color3.new(0,0,0), 1),
+        hpBar    = newLine(2, Color3.fromRGB(0,255,0), 2),
+        tracer   = newLine(1),
+        skeleton = skeleLines,
+        
+        dot      = newCircleDraw(false, 1.5, 32, 4),
+        bb       = nil,
+        bbDist   = nil,
+        hl       = nil,
     }
 end
 
 local function removeESPForModel(model)
     local d = modelESP[model]; if not d then return end
-    for _,v in pairs(d.box) do pcall(function() v:Remove() end) end
-    pcall(function() d.hpBg:Remove() end); pcall(function() d.hpBar:Remove() end)
+    for _, v in pairs(d.box) do pcall(function() v:Remove() end) end
+    pcall(function() d.hpBg:Remove() end)
+    pcall(function() d.hpBar:Remove() end)
     pcall(function() d.tracer:Remove() end)
+    for _, l in ipairs(d.skeleton) do pcall(function() l:Remove() end) end
+    pcall(function() d.dot:Remove() end)
     if d.bb and d.bb.Parent then d.bb:Destroy() end
     if d.bbDist and d.bbDist.Parent then d.bbDist:Destroy() end
     if d.hl and d.hl.Parent then d.hl:Destroy() end
@@ -283,27 +363,32 @@ local function removeESPForModel(model)
 end
 
 local function hideESPData(d)
-    for _,v in pairs(d.box) do v.Visible=false end
-    d.hpBg.Visible=false; d.hpBar.Visible=false; d.tracer.Visible=false
-    if d.bb then d.bb.Enabled=false end
-    if d.bbDist then d.bbDist.Enabled=false end
+    for _, v in pairs(d.box) do v.Visible = false end
+    d.hpBg.Visible   = false
+    d.hpBar.Visible  = false
+    d.tracer.Visible = false
+    for _, l in ipairs(d.skeleton) do l.Visible = false end
+    d.dot.Visible    = false
+    if d.bb then d.bb.Enabled = false end
+    if d.bbDist then d.bbDist.Enabled = false end
 end
 
+
 local function getScreenBox(char)
-    local minSX,minSY,maxSX,maxSY = math.huge,math.huge,-math.huge,-math.huge
+    local minSX, minSY, maxSX, maxSY = math.huge, math.huge, -math.huge, -math.huge
     local found = false
-    for _,p in ipairs(char:GetChildren()) do
+    for _, p in ipairs(char:GetChildren()) do
         if not p:IsA("BasePart") then continue end
-        local sx,sy,sz = p.Size.X/2, p.Size.Y/2, p.Size.Z/2
+        local sx, sy, sz = p.Size.X/2, p.Size.Y/2, p.Size.Z/2
         local corners = {
             Vector3.new( sx, sy, sz), Vector3.new(-sx, sy, sz),
             Vector3.new( sx,-sy, sz), Vector3.new(-sx,-sy, sz),
             Vector3.new( sx, sy,-sz), Vector3.new(-sx, sy,-sz),
             Vector3.new( sx,-sy,-sz), Vector3.new(-sx,-sy,-sz),
         }
-        for _,offset in ipairs(corners) do
+        for _, offset in ipairs(corners) do
             local worldPos = p.CFrame:PointToWorldSpace(offset)
-            local sp, on = Camera:WorldToScreenPoint(worldPos)
+            local sp, on  = Camera:WorldToViewportPoint(worldPos)
             if not on or sp.Z <= 0 then continue end
             found = true
             if sp.X < minSX then minSX = sp.X end
@@ -316,62 +401,158 @@ local function getScreenBox(char)
     return minSX, minSY, maxSX, maxSY
 end
 
+
 local function updateESPModel(model, d, label, boxColor)
     local hum = model:FindFirstChildOfClass("Humanoid")
     local hrp = model:FindFirstChild("HumanoidRootPart")
-    if not hum or hum.Health<=0 or not hrp then hideESPData(d) return end
-    local L,T,R,B = getScreenBox(model)
+    if not hum or hum.Health <= 0 or not hrp then hideESPData(d) return end
+
+    local L, T, R, B = getScreenBox(model)
     if not L then hideESPData(d) return end
-    local h = B-T; if h<1 then hideESPData(d) return end
-    local dist = math.floor((hrp.Position-Camera.CFrame.Position).Magnitude)
+    local h = B - T
+    if h < 1 then hideESPData(d) return end
 
+    local dist = math.floor((hrp.Position - Camera.CFrame.Position).Magnitude)
+
+    
     if ESPSettings.Box then
-        d.box.top.From=Vector2.new(L,T);    d.box.top.To=Vector2.new(R,T)
-        d.box.bottom.From=Vector2.new(L,B); d.box.bottom.To=Vector2.new(R,B)
-        d.box.left.From=Vector2.new(L,T);   d.box.left.To=Vector2.new(L,B)
-        d.box.right.From=Vector2.new(R,T);  d.box.right.To=Vector2.new(R,B)
-        for _,b in pairs(d.box) do b.Color=boxColor; b.Visible=true end
-    else for _,b in pairs(d.box) do b.Visible=false end end
+        d.box.top.From    = Vector2.new(L, T); d.box.top.To    = Vector2.new(R, T)
+        d.box.bottom.From = Vector2.new(L, B); d.box.bottom.To = Vector2.new(R, B)
+        d.box.left.From   = Vector2.new(L, T); d.box.left.To   = Vector2.new(L, B)
+        d.box.right.From  = Vector2.new(R, T); d.box.right.To  = Vector2.new(R, B)
+        for _, b in pairs(d.box) do b.Color = boxColor; b.Visible = true end
+    else
+        for _, b in pairs(d.box) do b.Visible = false end
+    end
 
-    d.hpBg.Visible=false; d.hpBar.Visible=false
+    
+    if ESPSettings.HealthBar then
+        local ratio = math.clamp(hum.Health / hum.MaxHealth, 0, 1)
+        local barX  = L - 5
+        d.hpBg.From  = Vector2.new(barX, T); d.hpBg.To  = Vector2.new(barX, B)
+        d.hpBg.Thickness  = 4; d.hpBg.Transparency = 1; d.hpBg.Visible = true
+        d.hpBar.From = Vector2.new(barX, B); d.hpBar.To = Vector2.new(barX, B - h * ratio)
+        d.hpBar.Thickness = 2
+        d.hpBar.Color = Color3.fromHSV(ratio * 120/360, 1, 1)
+        d.hpBar.Transparency = 1; d.hpBar.Visible = true
+    else
+        d.hpBg.Visible = false; d.hpBar.Visible = false
+    end
 
+    
     if ESPSettings.Names then
-        if not d.bb or not d.bb.Parent then d.bb = makeBillboard(model, "KXESP_Name", 1.5, 13) end
+        if not d.bb or not d.bb.Parent then
+            d.bb = makeBillboard(model, "KXESP_Name", 1.8, 13)
+        end
         if d.bb then
             local lbl = d.bb:FindFirstChildOfClass("TextLabel")
-            if lbl then lbl.Text=label; lbl.TextColor3=ESPSettings.NamesColor end
-            d.bb.Enabled=true
+            if lbl then lbl.Text = label; lbl.TextColor3 = ESPSettings.NamesColor end
+            d.bb.Enabled = true
         end
-    else if d.bb then d.bb.Enabled=false end end
+    else
+        if d.bb then d.bb.Enabled = false end
+    end
 
+    
     if ESPSettings.Distance then
-        if not d.bbDist or not d.bbDist.Parent then d.bbDist = makeBillboard(model, "KXESP_Dist", -1.5, 11) end
+        if not d.bbDist or not d.bbDist.Parent then
+            d.bbDist = makeBillboard(model, "KXESP_Dist", -1.8, 11)
+        end
         if d.bbDist then
             local lbl = d.bbDist:FindFirstChildOfClass("TextLabel")
-            if lbl then lbl.Text=dist.."m"; lbl.TextColor3=Color3.fromRGB(200,200,200) end
-            d.bbDist.Enabled=true
+            if lbl then lbl.Text = dist.."m"; lbl.TextColor3 = Color3.fromRGB(200,200,200) end
+            d.bbDist.Enabled = true
         end
-    else if d.bbDist then d.bbDist.Enabled=false end end
+    else
+        if d.bbDist then d.bbDist.Enabled = false end
+    end
 
+    
     if ESPSettings.Tracers then
-        local cx2 = (L+R)/2
-        local oy = ESPSettings.TracerOrigin == "Bottom" and Camera.ViewportSize.Y or 0
-        d.tracer.From=Vector2.new(Camera.ViewportSize.X/2, oy)
-        d.tracer.To=Vector2.new(cx2,B)
-        d.tracer.Color=ESPSettings.TracerColor; d.tracer.Visible=true
-    else d.tracer.Visible=false end
+        local cx2 = (L + R) / 2
+        local oy  = ESPSettings.TracerOrigin == "Bottom" and Camera.ViewportSize.Y or 0
+        d.tracer.From  = Vector2.new(Camera.ViewportSize.X/2, oy)
+        d.tracer.To    = Vector2.new(cx2, B)
+        d.tracer.Color = ESPSettings.TracerColor
+        d.tracer.Transparency = 1; d.tracer.Visible = true
+    else
+        d.tracer.Visible = false
+    end
 
+    
+    if ESPSettings.Skeleton then
+        for i, bone in ipairs(skeletonBones) do
+            local p0 = model:FindFirstChild(bone[1])
+            local p1 = model:FindFirstChild(bone[2])
+            if p0 and p1 then
+                local sp0, on0 = Camera:WorldToViewportPoint(p0.Position)
+                local sp1, on1 = Camera:WorldToViewportPoint(p1.Position)
+                if on0 and on1 and sp0.Z > 0 and sp1.Z > 0 then
+                    d.skeleton[i].From  = Vector2.new(sp0.X, sp0.Y)
+                    d.skeleton[i].To    = Vector2.new(sp1.X, sp1.Y)
+                    d.skeleton[i].Color = ESPSettings.SkeletonColor
+                    d.skeleton[i].Transparency = 1
+                    d.skeleton[i].Visible = true
+                else
+                    d.skeleton[i].Visible = false
+                end
+            else
+                d.skeleton[i].Visible = false
+            end
+        end
+    else
+        for _, l in ipairs(d.skeleton) do l.Visible = false end
+    end
+
+    
+    if ESPSettings.HeadDot then
+        local head = model:FindFirstChild("Head")
+        if head then
+            local hsp  = Camera:WorldToViewportPoint(head.Position)
+            local htop = Camera:WorldToViewportPoint(
+                (head.CFrame * CFrame.new(0,  head.Size.Y/2, 0)).Position
+            )
+            local hbot = Camera:WorldToViewportPoint(
+                (head.CFrame * CFrame.new(0, -head.Size.Y/2, 0)).Position
+            )
+            local sp2d   = Vector2.new(hsp.X, hsp.Y)
+            local top2d  = Vector2.new(htop.X, htop.Y)
+            local bot2d  = Vector2.new(hbot.X, hbot.Y)
+            local radius = math.max((top2d - bot2d).Magnitude / 2, 3)
+
+            d.dot.Position     = sp2d
+            d.dot.Radius       = radius
+            d.dot.Color        = ESPSettings.HeadDotColor
+            d.dot.Filled       = false
+            d.dot.Thickness    = 1.5
+            d.dot.Transparency = 1
+            d.dot.Visible      = true
+        else
+            d.dot.Visible = false
+        end
+    else
+        d.dot.Visible = false
+    end
+
+    
     if ESPSettings.Highlight then
         if not d.hl or not d.hl.Parent then
-            local hl=Instance.new("Highlight")
-            hl.FillColor=ESPSettings.HLFillColor; hl.OutlineColor=ESPSettings.HLOutlineColor
-            hl.FillTransparency=ESPSettings.HLFillTrans; hl.OutlineTransparency=ESPSettings.HLOutTrans
-            hl.Adornee=model; hl.Parent=espFolder; d.hl=hl
+            local hl = Instance.new("Highlight")
+            hl.FillColor        = ESPSettings.HLFillColor
+            hl.OutlineColor     = ESPSettings.HLOutlineColor
+            hl.FillTransparency = ESPSettings.HLFillTrans
+            hl.OutlineTransparency = ESPSettings.HLOutTrans
+            hl.Adornee = model; hl.Parent = espFolder
+            d.hl = hl
         else
-            d.hl.FillColor=ESPSettings.HLFillColor; d.hl.OutlineColor=ESPSettings.HLOutlineColor
-            d.hl.FillTransparency=ESPSettings.HLFillTrans; d.hl.OutlineTransparency=ESPSettings.HLOutTrans
+            d.hl.FillColor        = ESPSettings.HLFillColor
+            d.hl.OutlineColor     = ESPSettings.HLOutlineColor
+            d.hl.FillTransparency = ESPSettings.HLFillTrans
+            d.hl.OutlineTransparency = ESPSettings.HLOutTrans
         end
-    else if d.hl and d.hl.Parent then d.hl:Destroy(); d.hl=nil end end
+    else
+        if d.hl and d.hl.Parent then d.hl:Destroy(); d.hl = nil end
+    end
 end
 
 
@@ -380,40 +561,40 @@ local function onPlayerAdded(plr)
     plr.CharacterAdded:Connect(function(char)
         local d = modelESP[char]
         if d then
-            if d.bb and d.bb.Parent then d.bb:Destroy(); d.bb=nil end
-            if d.bbDist and d.bbDist.Parent then d.bbDist:Destroy(); d.bbDist=nil end
-            if d.hl and d.hl.Parent then d.hl:Destroy(); d.hl=nil end
+            if d.bb and d.bb.Parent then d.bb:Destroy(); d.bb = nil end
+            if d.bbDist and d.bbDist.Parent then d.bbDist:Destroy(); d.bbDist = nil end
+            if d.hl and d.hl.Parent then d.hl:Destroy(); d.hl = nil end
         end
     end)
 end
-for _,p in ipairs(Players:GetPlayers()) do onPlayerAdded(p) end
+for _, p in ipairs(Players:GetPlayers()) do onPlayerAdded(p) end
 Players.PlayerAdded:Connect(onPlayerAdded)
 Players.PlayerRemoving:Connect(function(plr)
     local char = plr.Character
     if char then removeESPForModel(char) end
 end)
 
-RunService.RenderStepped:Connect(function()
-    
-    local activeModels = {}
 
+RunService.RenderStepped:Connect(function()
     if not ESPSettings.Enabled or _hidden then
-        for _,d in pairs(modelESP) do
+        for _, d in pairs(modelESP) do
             hideESPData(d)
-            if d.hl and d.hl.Parent then d.hl:Destroy(); d.hl=nil end
+            if d.hl and d.hl.Parent then d.hl:Destroy(); d.hl = nil end
         end
         return
     end
+
     
-    for _,plr in ipairs(Players:GetPlayers()) do
+    local activeModels = {}
+    for _, plr in ipairs(Players:GetPlayers()) do
         if plr == LocalPlayer then continue end
         local char = plr.Character; if not char then continue end
         local hum = char:FindFirstChildOfClass("Humanoid")
-        if not hum or hum.Health<=0 then continue end
+        if not hum or hum.Health <= 0 then continue end
         local ally = isSameTeamModel(char)
         if ally and ESPSettings.TeamCheck then continue end
         local boxColor = ally and ESPSettings.AllyColor or ESPSettings.BoxColor
-        activeModels[char] = {label=plr.DisplayName, color=boxColor}
+        activeModels[char] = { label = plr.DisplayName, color = boxColor }
     end
 
     
@@ -426,16 +607,51 @@ RunService.RenderStepped:Connect(function()
     for model, d in pairs(modelESP) do
         if not activeModels[model] then
             hideESPData(d)
-            
-            if d.hl and d.hl.Parent then d.hl:Destroy(); d.hl=nil end
-            
+            if d.hl and d.hl.Parent then d.hl:Destroy(); d.hl = nil end
             if not model.Parent then removeESPForModel(model) end
         end
     end
 end)
 
 
+local _tpEnabled = false
+local _tpHolding = false
+
+local function doTeleport()
+    if not _tpEnabled then return end
+    local target = GetPlayerAtCrosshair()
+    if not (target and target.Character) then return end
+    local tHRP  = target.Character:FindFirstChild("HumanoidRootPart")
+    local myChar = LocalPlayer.Character
+    local myHRP  = myChar and myChar:FindFirstChild("HumanoidRootPart")
+    if tHRP and myHRP then
+        myHRP.CFrame = tHRP.CFrame * CFrame.new(0, 0, 3)
+    end
+end
+
+
 local Window = KraviX:CreateWindow({ Name="Combat Arena", Url="discord.gg/fDdwWjz8yk" })
+
+local function fullUnload()
+    AimbotSettings.Enabled = false; _aimBindState = false; AimbotSettings.StickyTarget = nil
+    SilentSettings.Enabled = false
+    ESPSettings.Enabled    = false
+    _tpEnabled             = false
+    _tpHolding             = false
+    _hidden                = false
+    for model, _ in pairs(modelESP) do removeESPForModel(model) end
+    modelESP = {}
+    AimbotCircle.Visible = false; SilentCircle.Visible = false
+    pcall(function() AimbotCircle:Remove() end)
+    pcall(function() SilentCircle:Remove() end)
+    if espFolder and espFolder.Parent then espFolder:Destroy() end
+    task.wait(0.1)
+    pcall(function()
+        if Window._ScreenGui and Window._ScreenGui.Parent then
+            Window._ScreenGui:Destroy()
+        end
+    end)
+end
 
 
 local TabAimbot = Window:CreateTab("Aimbot")
@@ -468,7 +684,7 @@ local secSilent = TabSilent:AddSection("Silent Aim", "Left")
 secSilent:AddToggle({Name="Enable Silent Aim", Default=false, Callback=function(v) SilentSettings.Enabled=v end})
 secSilent:AddDropdown({Name="Target Part", Values={"Head","HumanoidRootPart","UpperTorso","LowerTorso"}, Default="Head",
     Callback=function(v) SilentSettings.TargetPart=v end})
-secSilent:AddSlider({Name="FOV", Min=50, Max=1000, Default=50, Rounding=0, Callback=function(v) SilentSettings.FOV=v end})
+secSilent:AddSlider({Name="FOV", Min=20, Max=1000, Default=50, Rounding=0, Callback=function(v) SilentSettings.FOV=v end})
 secSilent:AddSeparator()
 secSilent:AddToggle({Name="Show FOV Circle", Default=true, Callback=function(v) SilentSettings.ShowFOV=v end})
 secSilent:AddColorPicker({Name="FOV Color", Default=Color3.fromRGB(255,255,255), Callback=function(v) SilentSettings.FOVColor=v end})
@@ -482,10 +698,23 @@ secESPL:AddSeparator()
 secESPL:AddToggle({Name="Box", Default=true, Callback=function(v) ESPSettings.Box=v end})
 secESPL:AddColorPicker({Name="Enemy Color", Default=Color3.fromRGB(255,80,80), Callback=function(v) ESPSettings.BoxColor=v end})
 secESPL:AddColorPicker({Name="Ally Color", Default=Color3.fromRGB(80,255,80), Callback=function(v) ESPSettings.AllyColor=v end})
+secESPL:AddSeparator()
+secESPL:AddToggle({Name="Health Bar", Default=false, Callback=function(v) ESPSettings.HealthBar=v end})
+secESPL:AddSeparator()
 secESPL:AddToggle({Name="Names", Default=true, Callback=function(v) ESPSettings.Names=v end})
 secESPL:AddColorPicker({Name="Names Color", Default=Color3.fromRGB(255,255,255), Callback=function(v) ESPSettings.NamesColor=v end})
-secESPL:AddToggle({Name="Team Check", Default=false, Callback=function(v) ESPSettings.TeamCheck=v end})
 secESPL:AddToggle({Name="Distance", Default=true, Callback=function(v) ESPSettings.Distance=v end})
+secESPL:AddToggle({Name="Team Check", Default=false, Callback=function(v) ESPSettings.TeamCheck=v end})
+secESPL:AddSeparator()
+
+
+secESPL:AddToggle({Name="Skeleton", Default=false, Callback=function(v) ESPSettings.Skeleton=v end})
+secESPL:AddColorPicker({Name="Skeleton Color", Default=Color3.fromRGB(255,255,255), Callback=function(v) ESPSettings.SkeletonColor=v end})
+secESPL:AddSeparator()
+
+
+secESPL:AddToggle({Name="Head Dot", Default=false, Callback=function(v) ESPSettings.HeadDot=v end})
+secESPL:AddColorPicker({Name="Head Dot Color", Default=Color3.fromRGB(255,255,255), Callback=function(v) ESPSettings.HeadDotColor=v end})
 
 local secESPR = TabESP:AddSection("Visuals", "Right")
 secESPR:AddToggle({Name="Tracers", Default=false, Callback=function(v) ESPSettings.Tracers=v end})
@@ -494,49 +723,55 @@ secESPR:AddDropdown({Name="Tracer Origin", Values={"Bottom","Top"}, Default="Bot
 secESPR:AddColorPicker({Name="Tracer Color", Default=Color3.fromRGB(255,255,255), Callback=function(v) ESPSettings.TracerColor=v end})
 secESPR:AddSeparator()
 secESPR:AddToggle({Name="Highlight", Default=false, Callback=function(v) ESPSettings.Highlight=v end})
-secESPR:AddColorPicker({Name="HL Fill", Default=Color3.fromRGB(255,80,80), Callback=function(v) ESPSettings.HLFillColor=v end})
+secESPR:AddColorPicker({Name="HL Fill", Default=Color3.fromRGB(255,255,255), Callback=function(v) ESPSettings.HLFillColor=v end})
 secESPR:AddColorPicker({Name="HL Outline", Default=Color3.fromRGB(255,255,255), Callback=function(v) ESPSettings.HLOutlineColor=v end})
 secESPR:AddSlider({Name="HL Fill Trans", Min=0, Max=1, Default=0.5, Rounding=2, Callback=function(v) ESPSettings.HLFillTrans=v end})
 secESPR:AddSlider({Name="HL Outline Trans", Min=0, Max=1, Default=0, Rounding=2, Callback=function(v) ESPSettings.HLOutTrans=v end})
 
-local function fullUnload()
-    AimbotSettings.Enabled = false; _aimBindState = false; AimbotSettings.StickyTarget = nil
-    SilentSettings.Enabled = false
-    ESPSettings.Enabled    = false
-    _hidden                = false
-    for model,_ in pairs(modelESP) do removeESPForModel(model) end
-    modelESP = {}
-    AimbotCircle.Visible = false; SilentCircle.Visible = false
-    pcall(function() AimbotCircle:Remove() end)
-    pcall(function() SilentCircle:Remove() end)
-    if espFolder and espFolder.Parent then espFolder:Destroy() end
-    task.wait(0.1)
-    pcall(function()
-        if Window._ScreenGui and Window._ScreenGui.Parent then
-            Window._ScreenGui:Destroy()
-        end
+
+local TabMisc   = Window:CreateTab("Misc")
+
+
+local secTP = TabMisc:AddSection("Teleport Player", "Left")
+secTP:AddToggle({Name="Enable Teleport", Default=false, Callback=function(v) _tpEnabled=v end})
+local _tpBindObj = secTP:AddMouseKeybind({
+    Name="Teleport Key",
+    Default={type="key", value=Enum.KeyCode.T},
+    Callback=function() end
+})
+secTP:AddLabel({Text="Toggle ON + hold key to teleport to nearest player."})
+
+UserInputService.InputBegan:Connect(function(inp, proc)
+    if proc then return end
+    if not matchesBind(inp, _tpBindObj.Value) then return end
+    if not _tpEnabled then return end
+    _tpHolding = true
+    task.spawn(function()
+        while _tpHolding do doTeleport(); task.wait(0.1) end
     end)
-end
+end)
+UserInputService.InputEnded:Connect(function(inp)
+    if matchesBind(inp, _tpBindObj.Value) then _tpHolding = false end
+end)
 
 
-local TabMisc = Window:CreateTab("Misc")
-local secMenu = TabMisc:AddSection("Menu", "Left")
-secMenu:AddLabel({Text="Menu toggle key (keyboard only):"})
-local _menuBindObj = secMenu:AddMouseKeybind({
+local secUtils = TabMisc:AddSection("Utils", "Right")
+
+secUtils:AddLabel({Text="Menu toggle key (keyboard only):"})
+local _menuBindObj = secUtils:AddMouseKeybind({
     Name="Menu Toggle Key", Default={type="key", value=Enum.KeyCode.RightControl},
     Callback=function() end
 })
-UserInputService.InputBegan:Connect(function(inp, proc)
-    if proc then return end
-    if matchesMenuBind(inp, _menuBindObj and _menuBindObj.Value) then Window.ToggleWindow() end
-end)
 
-local secUtils = TabMisc:AddSection("Utils", "Right")
+secUtils:AddSeparator()
 
 local _hideVisualsBindObj = secUtils:AddMouseKeybind({
     Name="Hide Visuals", Default={type="key", value=Enum.KeyCode.Delete},
     Callback=function() end
 })
+
+secUtils:AddSeparator()
+
 local _unloadBindObj = secUtils:AddMouseKeybind({
     Name="Unload Script", Default={type="key", value=Enum.KeyCode.End},
     Callback=function() end
@@ -544,6 +779,7 @@ local _unloadBindObj = secUtils:AddMouseKeybind({
 
 UserInputService.InputBegan:Connect(function(inp, proc)
     if proc then return end
+    if matchesMenuBind(inp, _menuBindObj and _menuBindObj.Value) then Window.ToggleWindow() end
     if matchesBind(inp, _hideVisualsBindObj and _hideVisualsBindObj.Value) then
         _hidden = not _hidden
     end
@@ -551,5 +787,3 @@ UserInputService.InputBegan:Connect(function(inp, proc)
         fullUnload()
     end
 end)
-
-
