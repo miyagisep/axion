@@ -6,16 +6,11 @@ local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local TeleportService  = game:GetService("TeleportService")
+local TweenService     = game:GetService("TweenService")
+local Lighting         = game:GetService("Lighting")
 local LocalPlayer      = Players.LocalPlayer
 local Camera           = workspace.CurrentCamera
 
-
-local Window
-local function notify(title, msg, duration)
-    if Window and Window.Notify then
-        Window.Notify(title, msg, duration)
-    end
-end
 
 local AimbotSettings = {
     Enabled=false, FOV=100, ShowFOV=false,
@@ -45,6 +40,55 @@ local FlySettings   = { Enabled=false, Speed=50 }
 local _hidden = false
 
 
+local NoClipEnabled = false
+RunService.Heartbeat:Connect(function()
+    if NoClipEnabled and LocalPlayer.Character then
+        for _, part in pairs(LocalPlayer.Character:GetChildren()) do
+            if part:IsA("BasePart") then part.CanCollide = false end
+        end
+    end
+end)
+
+
+local LightingMods = false
+local OrigLighting = {
+    Ambient=Lighting.Ambient, OutdoorAmbient=Lighting.OutdoorAmbient,
+    FogStart=Lighting.FogStart, FogEnd=Lighting.FogEnd,
+    FogColor=Lighting.FogColor, Brightness=Lighting.Brightness
+}
+local LightingMod = {
+    Ambient=Color3.new(0,0,0), OutdoorAmbient=Color3.fromRGB(80,120,200),
+    FogStart=50, FogEnd=1000, FogColor=Color3.fromRGB(80,120,200), Brightness=2
+}
+RunService.Heartbeat:Connect(function()
+    if not LightingMods or _hidden then return end
+    Lighting.Ambient=LightingMod.Ambient; Lighting.OutdoorAmbient=LightingMod.OutdoorAmbient
+    Lighting.FogStart=LightingMod.FogStart; Lighting.FogEnd=LightingMod.FogEnd
+    Lighting.FogColor=LightingMod.FogColor; Lighting.Brightness=LightingMod.Brightness
+end)
+
+
+
+
+local scEnabled=false; local scColor=Color3.fromRGB(155,125,175); local scTrans=0; local scReflect=0
+local scMat="ForceField"; local scEffect="none"; local scParticles="none"
+local scParticleColor=Color3.fromRGB(255,255,255); local scParticleTrans=0
+local scCharConn; local scHeatConn; local scHeatTime=0; local scHeatLast=0; local scOriginal={}
+local scR15={"LeftFoot","LeftLowerLeg","LeftUpperLeg","RightFoot","RightLowerLeg","RightUpperLeg","LeftHand","LeftLowerArm","LeftUpperArm","RightHand","RightLowerArm","RightUpperArm","LowerTorso","UpperTorso","Head"}
+local scHeatMap={LeftFoot=0.7,LeftLowerLeg=0.3,LeftUpperLeg=0.5,RightFoot=0.7,RightLowerLeg=0.3,RightUpperLeg=0.5,LeftHand=0.7,LeftLowerArm=0.3,LeftUpperArm=0.5,RightHand=0.7,RightLowerArm=0.3,RightUpperArm=0.5,LowerTorso=0.3,UpperTorso=0.5,Head=0.5}
+
+local function scRemoveParticles(char) if not char then return end for _,pn in ipairs(scR15) do local p=char:FindFirstChild(pn) if p then local s1=p:FindFirstChild("SC_Stars") local s2=p:FindFirstChild("SC_Specks") if s1 then pcall(function() s1:Destroy() end) end if s2 then pcall(function() s2:Destroy() end) end end end end
+local function scApplyStars(char) if not char then return end for _,pn in ipairs(scR15) do local p=char:FindFirstChild(pn) if not p then continue end pcall(function() local e=Instance.new("ParticleEmitter") e.Name="SC_Stars" e.Lifetime=NumberRange.new(0.45,0.9) e.LockedToPart=true e.LightEmission=1 e.Color=ColorSequence.new(scParticleColor) e.Speed=NumberRange.new(0.001,0.001) e.Brightness=3 e.ZOffset=1 e.Size=NumberSequence.new({NumberSequenceKeypoint.new(0,0),NumberSequenceKeypoint.new(0.508,0.05,0.05),NumberSequenceKeypoint.new(1,0)}) e.Rate=150 e.Texture="rbxassetid://1084996976" e.Transparency=NumberSequence.new(scParticleTrans) e.Orientation=Enum.ParticleOrientation.VelocityPerpendicular e.Parent=p end) end end
+local function scApplySpecks(char) if not char then return end for _,pn in ipairs(scR15) do local p=char:FindFirstChild(pn) if not p then continue end pcall(function() local e=Instance.new("ParticleEmitter") e.Name="SC_Specks" e.Lifetime=NumberRange.new(0.22,0.22) e.SpreadAngle=Vector2.new(90,90) e.LightEmission=1 e.Color=ColorSequence.new(scParticleColor) e.Speed=NumberRange.new(1,1) e.Brightness=4.2 e.Size=NumberSequence.new(0.15) local t=scParticleTrans e.Transparency=NumberSequence.new({NumberSequenceKeypoint.new(0,math.min(1,t+0.8)),NumberSequenceKeypoint.new(0.25,math.max(0,t-0.1)),NumberSequenceKeypoint.new(1,math.min(1,t+0.8))}) e.Rate=100 e.Texture="rbxassetid://7216849703" e.Acceleration=Vector3.new(0,-15,0) e.Parent=p end) end end
+local function scCacheChar(char) if not char then return end scOriginal={} for _,pn in ipairs(scR15) do local p=char:FindFirstChild(pn) if p and (p:IsA("MeshPart") or p:IsA("BasePart")) then scOriginal[pn]={Material=p.Material,Color=p.Color,Transparency=p.Transparency,Reflectance=p.Reflectance,TextureID=p:IsA("MeshPart") and p.TextureID or nil} end end for _,d in ipairs(char:GetDescendants()) do if d:IsA("Shirt") then scOriginal._shirt=d.ShirtTemplate end if d:IsA("Pants") then scOriginal._pants=d.PantsTemplate end end end
+local function scApply(char) if not char then return end for _,d in ipairs(char:GetDescendants()) do if d:IsA("Pants") or d:IsA("Shirt") then pcall(function() d:Destroy() end) end end for _,pn in ipairs(scR15) do local p=char:FindFirstChild(pn) if not p then continue end pcall(function() p.Material=Enum.Material[scMat] p.Color=scColor p.Reflectance=scReflect if p:IsA("MeshPart") then p.TextureID="" end if scEffect~="heat" then p.Transparency=scTrans end end) end scRemoveParticles(char) if scParticles=="stars" then scApplyStars(char) elseif scParticles=="specks" then scApplySpecks(char) end end
+local function scRestore(char) if not char then return end scRemoveParticles(char) for _,pn in ipairs(scR15) do local p=char:FindFirstChild(pn) local d=scOriginal[pn] if p and d then pcall(function() p.Material=d.Material p.Color=d.Color p.Transparency=d.Transparency p.Reflectance=d.Reflectance if p:IsA("MeshPart") and d.TextureID then p.TextureID=d.TextureID end end) end end if scOriginal._shirt then pcall(function() local s=Instance.new("Shirt") s.ShirtTemplate=scOriginal._shirt s.Parent=char end) end if scOriginal._pants then pcall(function() local p=Instance.new("Pants") p.PantsTemplate=scOriginal._pants p.Parent=char end) end end
+local function scStopHeat() if scHeatConn then scHeatConn:Disconnect() scHeatConn=nil end scHeatTime=0 scHeatLast=0 end
+local function scStartHeat(char) scStopHeat() scHeatLast=tick() scHeatConn=RunService.Heartbeat:Connect(function() if not scEnabled or scEffect~="heat" then scStopHeat() return end if not char or not char.Parent then return end local now=tick() local dt=now-scHeatLast scHeatLast=now scHeatTime=scHeatTime+dt local pulse=math.sin(scHeatTime*2)*0.5+0.5 for _,pn in ipairs(scR15) do local p=char:FindFirstChild(pn) if p and scHeatMap[pn] then local base=scHeatMap[pn] pcall(function() p.Transparency=base+(math.min(base+0.2,1)-base)*pulse end) end end end) end
+local function scEnable() local char=LocalPlayer.Character scCacheChar(char) scApply(char) if scEffect=="heat" then scStartHeat(char) end if scCharConn then scCharConn:Disconnect() end scCharConn=LocalPlayer.CharacterAdded:Connect(function(c) c:WaitForChild("Humanoid") task.wait(1.1) if not scEnabled then return end scCacheChar(c) scApply(c) if scEffect=="heat" then scStartHeat(c) end end) end
+local function scDisable() scStopHeat() if scCharConn then scCharConn:Disconnect() scCharConn=nil end scRestore(LocalPlayer.Character) end
+
+
 local AimbotCircle = Drawing.new("Circle")
 AimbotCircle.Thickness=2; AimbotCircle.NumSides=64; AimbotCircle.Filled=false; AimbotCircle.Visible=false
 
@@ -56,6 +100,7 @@ local TriggerBoxLeft=Drawing.new("Line"); local TriggerBoxRight=Drawing.new("Lin
 for _,l in ipairs({TriggerBoxTop,TriggerBoxBot,TriggerBoxLeft,TriggerBoxRight}) do
     l.Thickness=1.5; l.Visible=false; l.ZIndex=5
 end
+
 
 local _aimBindState = false
 local _aimMode      = "Hold"
@@ -91,7 +136,7 @@ local function matchesWhitelist(whitelist, plr)
     if not whitelist then return false end
     local nameLower    = plr.Name:lower()
     local displayLower = plr.DisplayName:lower()
-    for entry in pairs(whitelist) do
+    for entry, _ in pairs(whitelist) do
         local e = entry:lower()
         if nameLower == e or displayLower == e then
             return true
@@ -99,6 +144,7 @@ local function matchesWhitelist(whitelist, plr)
     end
     return false
 end
+
 
 local function findPlayersByPrefix(prefix)
     local p = prefix:lower()
@@ -111,86 +157,6 @@ local function findPlayersByPrefix(prefix)
     end
     return found
 end
-
-local function handleWhitelistAdd(text, whitelist, label)
-    text = text:match("^%s*(.-)%s*$")
-    if text == "" then return end
-    local textLower = text:lower()
-
-    local existingKey = nil
-    for entry in pairs(whitelist) do
-        if entry:lower() == textLower then existingKey = entry; break end
-    end
-    if existingKey then
-        whitelist[existingKey] = nil
-        notify(label, existingKey.." removed", 2)
-        AimbotSettings.StickyTarget = nil
-        return
-    end
-
-    local matches = findPlayersByPrefix(text)
-    if #matches == 1 then
-        local plr = matches[1]
-        whitelist[plr.Name] = true
-        whitelist[plr.DisplayName] = true
-        notify(label, plr.Name.." added", 2)
-    elseif #matches > 1 then
-        local names = {}
-        for _, p in ipairs(matches) do table.insert(names, p.Name) end
-        notify(label, "Ambiguous: "..table.concat(names, ", "), 3)
-    else
-        notify(label, '"'..text..'" not found', 2)
-    end
-    AimbotSettings.StickyTarget = nil
-end
-
-local function handleWhitelistRemove(text, whitelist, label)
-    text = text:match("^%s*(.-)%s*$")
-    if text == "" then return end
-    local textLower = text:lower()
-
-    local resolvedKeys = {}
-    local resolvedName = text
-    local matches = findPlayersByPrefix(text)
-    if #matches == 1 then
-        local plr = matches[1]
-        resolvedName = plr.Name
-        table.insert(resolvedKeys, plr.Name)
-        table.insert(resolvedKeys, plr.DisplayName)
-    elseif #matches > 1 then
-        local names = {}
-        for _, p in ipairs(matches) do table.insert(names, p.Name) end
-        notify(label, "Ambiguous: "..table.concat(names, ", "), 3)
-        return
-    else
-        table.insert(resolvedKeys, text)
-    end
-
-    local toDelete = {}
-    for entry in pairs(whitelist) do
-        local eLower = entry:lower()
-        for _, rk in ipairs(resolvedKeys) do
-            if eLower == rk:lower() then
-                table.insert(toDelete, entry); break
-            end
-        end
-        if eLower:sub(1, #textLower) == textLower then
-            local already = false
-            for _, d in ipairs(toDelete) do if d == entry then already=true; break end end
-            if not already then table.insert(toDelete, entry) end
-        end
-    end
-
-    if #toDelete == 0 then
-        notify(label, '"'..resolvedName..'" not found in whitelist', 2)
-        return
-    end
-
-    for _, key in ipairs(toDelete) do whitelist[key] = nil end
-    AimbotSettings.StickyTarget = nil
-    notify(label, resolvedName.." removed", 2)
-end
-
 
 local function GetClosest(fov, part, whitelist, ignoreKO)
     local closest, best = nil, fov
@@ -255,6 +221,7 @@ local function matchesMenuBind(inp, bind)
     if bind.value == Enum.KeyCode.Unknown then return false end
     return true
 end
+
 
 local mouse = LocalPlayer:GetMouse()
 
@@ -369,17 +336,6 @@ local function isAimInput(inp)
     if not _aimBindObj then return false end
     return matchesBind(inp, _aimBindObj.Value)
 end
-UserInputService.InputBegan:Connect(function(inp, proc)
-    if proc or not AimbotSettings.Enabled then return end
-    if isAimInput(inp) then
-        if _aimMode=="Hold" then _aimBindState=true
-        else _aimBindState=not _aimBindState; if not _aimBindState then AimbotSettings.StickyTarget=nil end end
-    end
-end)
-UserInputService.InputEnded:Connect(function(inp)
-    if not AimbotSettings.Enabled or _aimMode~="Hold" then return end
-    if isAimInput(inp) then _aimBindState=false; AimbotSettings.StickyTarget=nil end
-end)
 
 
 local ReplicatedStorage   = game:GetService("ReplicatedStorage")
@@ -470,12 +426,12 @@ UserInputService.InputEnded:Connect(function(i)
 end)
 
 
-RunService.RenderStepped:Connect(function()
-    if not (SpeedSettings.Enabled and SpeedSettings.KeybindActive) then return end
-    local char = LocalPlayer.Character
-    local hum  = char and char:FindFirstChildOfClass("Humanoid")
-    if not hum then return end
-    hum.WalkSpeed = SpeedSettings.Value
+RunService.Heartbeat:Connect(function()
+    if SpeedSettings.Enabled and SpeedSettings.KeybindActive then
+        local char = LocalPlayer.Character
+        local hum  = char and char:FindFirstChildOfClass("Humanoid")
+        if hum then hum.WalkSpeed = SpeedSettings.Value end
+    end
 end)
 
 
@@ -531,6 +487,7 @@ UserInputService.InputEnded:Connect(function(inp)
 end)
 
 
+
 local ESPSettings = {
     Enabled=false, Box=false, BoxColor=Color3.fromRGB(255,255,255),
     BoxFill=false, BoxFillColor=Color3.fromRGB(255,255,255), BoxFillTrans=0.7,
@@ -539,6 +496,8 @@ local ESPSettings = {
     Distance=false, DistanceColor=Color3.fromRGB(200,200,200),
     Tracers=false, TracerColor=Color3.fromRGB(255,255,255), TracerOrigin="Bottom",
     Skeleton=false, SkeletonColor=Color3.fromRGB(255,255,255),
+    WeaponESP=false, WeaponColor=Color3.fromRGB(255,255,255), 
+    HeadDot=false, HeadDotColor=Color3.fromRGB(255,255,255),
     Highlight=false, HLFillColor=Color3.fromRGB(255,255,255),
     HLOutlineColor=Color3.fromRGB(255,255,255), HLFillTrans=0.7, HLOutTrans=0,
     Chams=false, ChamsColor=Color3.fromRGB(255,255,255), ChamsTrans=0.5,
@@ -582,7 +541,10 @@ local function createESP(plr)
         box={top=newLine(1),bottom=newLine(1),left=newLine(1),right=newLine(1),fill=newQuad(nil,true,0.7,1)},
         healthBar={bg=newLine(4,Color3.new(0,0,0),2),bar=newLine(2,Color3.fromRGB(0,255,0),3)},
         name=newText(13),distance=newText(11,Color3.fromRGB(200,200,200)),
-        tracer=newLine(1),skeleton={},highlight=nil,chams={},
+        tracer=newLine(1),skeleton={},
+        dot=nil, dotOut=nil,
+        tWeapon=newText(11, Color3.fromRGB(255,255,255)),
+        highlight=nil,chams={},
     }
     for i=1,#skeletonBones do d.skeleton[i]=newLine(1) end
     playerESP[plr]=d
@@ -596,6 +558,9 @@ local function destroyESPEntry(d)
     pcall(function() d.distance:Remove() end)
     pcall(function() d.tracer:Remove() end)
     for _,l in ipairs(d.skeleton) do pcall(function() l:Remove() end) end
+    if d.dot    then pcall(function() d.dot:Remove() end);    d.dot=nil    end
+    if d.dotOut then pcall(function() d.dotOut:Remove() end); d.dotOut=nil end
+    pcall(function() d.tWeapon:Remove() end)
     if d.highlight and d.highlight.Parent then d.highlight:Destroy(); d.highlight=nil end
     for _,inst in ipairs(d.chams) do
         if inst and inst.Parent then inst:Destroy() end
@@ -614,6 +579,16 @@ local function hideESP(d)
     d.healthBar.bg.Visible=false; d.healthBar.bar.Visible=false
     d.name.Visible=false; d.distance.Visible=false; d.tracer.Visible=false
     for _,l in ipairs(d.skeleton) do l.Visible=false end
+    if d.dot    then d.dot.Visible=false    end
+    if d.dotOut then d.dotOut.Visible=false end
+    d.tWeapon.Visible=false
+end
+
+
+local function clearHighlightAndChams(d)
+    if d.highlight and d.highlight.Parent then d.highlight:Destroy(); d.highlight=nil end
+    for _,inst in ipairs(d.chams) do if inst and inst.Parent then inst:Destroy() end end
+    d.chams={}
 end
 
 local function updateESPPlayer(plr,d)
@@ -630,6 +605,7 @@ local function updateESPPlayer(plr,d)
     local L,R,T,B=sTop.X-width/2,sTop.X+width/2,sTop.Y,sBot.Y
     local dist=math.floor((hrp.Position-Camera.CFrame.Position).Magnitude)
 
+    
     if ESPSettings.Box then
         d.box.top.From=Vector2.new(L,T); d.box.top.To=Vector2.new(R,T)
         d.box.bottom.From=Vector2.new(L,B); d.box.bottom.To=Vector2.new(R,B)
@@ -646,6 +622,7 @@ local function updateESPPlayer(plr,d)
         else d.box.fill.Visible=false end
     else for _,b in pairs(d.box) do b.Visible=false end end
 
+    
     if ESPSettings.HealthBar then
         local ratio=math.clamp(hum.Health/hum.MaxHealth,0,1)
         local barX=ESPSettings.HealthBarSide=="Left" and L-5 or R+5
@@ -656,17 +633,20 @@ local function updateESPPlayer(plr,d)
         d.healthBar.bar.Transparency=1; d.healthBar.bar.Visible=true
     else d.healthBar.bg.Visible=false; d.healthBar.bar.Visible=false end
 
+    
     if ESPSettings.Names then
         d.name.Text=plr.DisplayName.." (@"..plr.Name..")"
         d.name.Color=ESPSettings.NameColor
         d.name.Position=Vector2.new(sTop.X,T-16); d.name.Center=true; d.name.Visible=true
     else d.name.Visible=false end
 
+    
     if ESPSettings.Distance then
         d.distance.Text=dist.." studs"; d.distance.Color=ESPSettings.DistanceColor
         d.distance.Position=Vector2.new(sTop.X,B+2); d.distance.Center=true; d.distance.Visible=true
     else d.distance.Visible=false end
 
+    
     if ESPSettings.Tracers then
         local vpS=Camera.ViewportSize
         local oy=ESPSettings.TracerOrigin=="Bottom" and vpS.Y or 0
@@ -674,6 +654,7 @@ local function updateESPPlayer(plr,d)
         d.tracer.Color=ESPSettings.TracerColor; d.tracer.Transparency=1; d.tracer.Visible=true
     else d.tracer.Visible=false end
 
+    
     if ESPSettings.Skeleton then
         for i,bone in ipairs(skeletonBones) do
             local p0=char:FindFirstChild(bone[1]); local p1=char:FindFirstChild(bone[2])
@@ -688,6 +669,55 @@ local function updateESPPlayer(plr,d)
         end
     else for _,l in ipairs(d.skeleton) do l.Visible=false end end
 
+    
+    if ESPSettings.WeaponESP then
+        local tool = char:FindFirstChildWhichIsA("Tool")
+        if tool then
+            d.tWeapon.Text            = "[" .. tool.Name .. "]"
+            d.tWeapon.Color           = ESPSettings.WeaponColor
+            d.tWeapon.OutlineColor    = Color3.fromRGB(0, 0, 0)
+            d.tWeapon.Size            = math.clamp(height * 0.11, 11, 16)
+            d.tWeapon.Transparency    = 1
+            d.tWeapon.Position        = Vector2.new(sTop.X, B + 18)
+            d.tWeapon.Center          = true
+            d.tWeapon.Visible         = true
+        else
+            d.tWeapon.Visible = false
+        end
+    else
+        d.tWeapon.Visible = false
+    end
+
+    
+    local head = char:FindFirstChild("Head")
+    if ESPSettings.HeadDot and head then
+        local hsp, hon, hz = w2s(head.Position)
+        if hon and hz > 0 then
+            local headTop = w2s((head.CFrame * CFrame.new(0,  head.Size.Y/2, 0)).Position)
+            local headBot = w2s((head.CFrame * CFrame.new(0, -head.Size.Y/2, 0)).Position)
+            local radius  = math.max(math.abs((headTop - headBot).Y) - 2, 2)
+            if not d.dotOut then
+                d.dotOut=Drawing.new("Circle"); d.dotOut.NumSides=30
+                d.dotOut.Filled=false; d.dotOut.Thickness=3; d.dotOut.ZIndex=3
+            end
+            if not d.dot then
+                d.dot=Drawing.new("Circle"); d.dot.NumSides=30
+                d.dot.Filled=false; d.dot.Thickness=1; d.dot.ZIndex=4
+            end
+            d.dotOut.Position=hsp; d.dotOut.Radius=radius
+            d.dotOut.Color=Color3.fromRGB(0,0,0); d.dotOut.Visible=true
+            d.dot.Position=hsp; d.dot.Radius=radius
+            d.dot.Color=ESPSettings.HeadDotColor; d.dot.Visible=true
+        else
+            if d.dot    then d.dot.Visible=false    end
+            if d.dotOut then d.dotOut.Visible=false end
+        end
+    else
+        if d.dot    then d.dot.Visible=false    end
+        if d.dotOut then d.dotOut.Visible=false end
+    end
+
+    
     if ESPSettings.Highlight then
         if not d.highlight or not d.highlight.Parent then
             local hl=Instance.new("Highlight")
@@ -702,6 +732,7 @@ local function updateESPPlayer(plr,d)
         if d.highlight and d.highlight.Parent then d.highlight:Destroy(); d.highlight=nil end
     end
 
+    
     if ESPSettings.Chams then
         if #d.chams==0 then
             for _,part in ipairs(char:GetChildren()) do
@@ -730,23 +761,21 @@ local function onPlayerAdded(plr)
         local d=playerESP[plr]; if not d then return end
         for _,inst in ipairs(d.chams) do if inst.Parent then inst:Destroy() end end; d.chams={}
         if d.highlight and d.highlight.Parent then d.highlight:Destroy(); d.highlight=nil end
+        if d.dot    then pcall(function() d.dot:Remove() end);    d.dot=nil    end
+        if d.dotOut then pcall(function() d.dotOut:Remove() end); d.dotOut=nil end
     end)
 end
 for _,p in ipairs(Players:GetPlayers()) do onPlayerAdded(p) end
 Players.PlayerAdded:Connect(onPlayerAdded)
 Players.PlayerRemoving:Connect(removeESP)
 
+
 RunService.RenderStepped:Connect(function()
     if not ESPSettings.Enabled or _hidden then
         for _,d in pairs(playerESP) do
             hideESP(d)
-            if not ESPSettings.Highlight then
-                if d.highlight and d.highlight.Parent then d.highlight:Destroy(); d.highlight=nil end
-            end
-            if not ESPSettings.Chams then
-                for _,inst in ipairs(d.chams) do if inst.Parent then inst:Destroy() end end
-                d.chams={}
-            end
+            
+            clearHighlightAndChams(d)
         end
         return
     end
@@ -754,19 +783,26 @@ RunService.RenderStepped:Connect(function()
 end)
 
 
-Window = KraviX:CreateWindow({
+local Window = KraviX:CreateWindow({
     Name = "Da Hood",
     Url  = "discord.gg/fDdwWjz8yk",
 })
 
+
 local function fullUnload()
-    AimbotSettings.Enabled   = false; _aimBindState=false; AimbotSettings.StickyTarget=nil
-    SilentAimSettings.Enabled = false; _removeGunHandlerHook()
-    RapidFireSettings.Enabled = false; _isFiring=false
-    TriggerSettings.Enabled   = false; TriggerSettings.Active=false
+    AimbotSettings.Enabled  = false; _aimBindState=false; AimbotSettings.StickyTarget=nil
+    SilentAimSettings.Enabled= false; _removeGunHandlerHook()
+    RapidFireSettings.Enabled= false; _isFiring=false
+    TriggerSettings.Enabled  = false; TriggerSettings.Active=false
     SpeedSettings.Enabled    = false; SpeedSettings.KeybindActive=false
     FlySettings.Enabled      = false; _flyToggled=false; stopFly()
     _hidden = false
+    NoClipEnabled = false
+    LightingMods = false
+    Lighting.Ambient=OrigLighting.Ambient; Lighting.OutdoorAmbient=OrigLighting.OutdoorAmbient
+    Lighting.FogStart=OrigLighting.FogStart; Lighting.FogEnd=OrigLighting.FogEnd
+    Lighting.FogColor=OrigLighting.FogColor; Lighting.Brightness=OrigLighting.Brightness
+    if scEnabled then scDisable() end; scEnabled=false
 
     local char=LocalPlayer.Character
     local hum=char and char:FindFirstChildOfClass("Humanoid")
@@ -799,6 +835,82 @@ local function fullUnload()
 end
 
 
+local function handleWhitelistInput(text, whitelist, label)
+    text = text:match("^%s*(.-)%s*$")
+    if text == "" then return end
+    local textLower = text:lower()
+    local existingKey = nil
+    for entry, _ in pairs(whitelist) do
+        if entry:lower() == textLower then existingKey = entry; break end
+    end
+    if existingKey then
+        whitelist[existingKey] = nil
+        Window.Notify(label, existingKey.." removed", 2)
+        AimbotSettings.StickyTarget = nil
+        return
+    end
+    local matches = findPlayersByPrefix(text)
+    if #matches == 1 then
+        local plr = matches[1]
+        whitelist[plr.Name] = true
+        whitelist[plr.DisplayName] = true
+        Window.Notify(label, plr.Name.." added", 2)
+    elseif #matches > 1 then
+        local names = {}
+        for _, p in ipairs(matches) do table.insert(names, p.Name) end
+        Window.Notify(label, "Ambiguous: "..table.concat(names, ", "), 3)
+    else
+        whitelist[text] = true
+        Window.Notify(label, text.." added (offline)", 2)
+    end
+    AimbotSettings.StickyTarget = nil
+end
+
+local function handleWhitelistRemove(text, whitelist, label)
+    text = text:match("^%s*(.-)%s*$")
+    if text == "" then return end
+    local textLower = text:lower()
+    local resolvedKeys = {}
+    local resolvedName = text
+    local matches = findPlayersByPrefix(text)
+    if #matches == 1 then
+        local plr = matches[1]
+        resolvedName = plr.Name
+        table.insert(resolvedKeys, plr.Name)
+        table.insert(resolvedKeys, plr.DisplayName)
+    elseif #matches > 1 then
+        local names = {}
+        for _, p in ipairs(matches) do table.insert(names, p.Name) end
+        Window.Notify(label, "Ambiguous: "..table.concat(names, ", "), 3)
+        return
+    else
+        table.insert(resolvedKeys, text)
+    end
+    local toDelete = {}
+    for entry, _ in pairs(whitelist) do
+        local eLower = entry:lower()
+        for _, rk in ipairs(resolvedKeys) do
+            if eLower == rk:lower() then
+                table.insert(toDelete, entry); break
+            end
+        end
+        if eLower:sub(1, #textLower) == textLower then
+            local already = false
+            for _, d in ipairs(toDelete) do if d == entry then already=true; break end end
+            if not already then table.insert(toDelete, entry) end
+        end
+    end
+    if #toDelete == 0 then
+        Window.Notify(label, '"'..resolvedName..'" not found in whitelist', 2)
+        return
+    end
+    for _, key in ipairs(toDelete) do whitelist[key] = nil end
+    AimbotSettings.StickyTarget = nil
+    Window.Notify(label, resolvedName.." removed", 2)
+end
+
+
+
 local TabAimbot = Window:CreateTab("Aimbot")
 local secAimbot = TabAimbot:AddSection("Aimbot","Left")
 
@@ -816,6 +928,25 @@ _aimBindObj = secAimbot:AddMouseKeybind({
     Default={type="mouse",value=Enum.UserInputType.MouseButton2},
     Callback=function() _aimBindState=false; AimbotSettings.StickyTarget=nil end
 })
+
+UserInputService.InputBegan:Connect(function(inp, proc)
+    if proc or not AimbotSettings.Enabled then return end
+    if not isAimInput(inp) then return end
+    if _aimMode == "Hold" then
+        _aimBindState = true
+    else
+        _aimBindState = not _aimBindState
+        if not _aimBindState then AimbotSettings.StickyTarget = nil end
+    end
+end)
+UserInputService.InputEnded:Connect(function(inp)
+    if not AimbotSettings.Enabled then return end
+    if _aimMode ~= "Hold" then return end
+    if not isAimInput(inp) then return end
+    _aimBindState = false
+    AimbotSettings.StickyTarget = nil
+end)
+
 secAimbot:AddToggle({Name="Sticky Target",Default=false,Callback=function(v)
     AimbotSettings.Sticky=v; if not v then AimbotSettings.StickyTarget=nil end
 end})
@@ -823,7 +954,7 @@ secAimbot:AddToggle({Name="Ignore K.O Players",Default=false,Callback=function(v
     AimbotSettings.IgnoreKO=v; AimbotSettings.StickyTarget=nil
 end})
 secAimbot:AddSeparator()
-secAimbot:AddToggle({Name="Prediction",Description="Anticipates target movement based on velocity",Default=false,
+secAimbot:AddToggle({Name="Prediction",Default=false,
     Callback=function(v) AimbotSettings.PredictEnabled=v end})
 secAimbot:AddSlider({Name="Predict Amount",Min=0.01,Max=0.5,Default=0.15,Rounding=2,
     Callback=function(v) AimbotSettings.PredictAmount=v end})
@@ -834,7 +965,7 @@ secAimbot:AddColorPicker({Name="FOV Color",Default=Color3.fromRGB(255,255,255),
 secAimbot:AddSeparator()
 secAimbot:AddLabel({Text="Aimbot Whitelist — Add (prefix accepted):"})
 secAimbot:AddTextbox({Name="Add",Placeholder="Name or start of name",Callback=function(name)
-    handleWhitelistAdd(name, AimbotSettings.Whitelist, "Aimbot WL")
+    handleWhitelistInput(name, AimbotSettings.Whitelist, "Aimbot WL")
 end})
 secAimbot:AddLabel({Text="Aimbot Whitelist — Remove:"})
 secAimbot:AddTextbox({Name="Remove",Placeholder="Exact name or prefix",Callback=function(name)
@@ -865,7 +996,7 @@ secRight:AddColorPicker({Name="FOV Color",Default=Color3.fromRGB(255,255,255),
 secRight:AddSeparator()
 secRight:AddLabel({Text="Silent Whitelist — Add (prefix accepted):"})
 secRight:AddTextbox({Name="Add",Placeholder="Name or start of name",Callback=function(name)
-    handleWhitelistAdd(name, SilentAimSettings.Whitelist, "Silent WL")
+    handleWhitelistInput(name, SilentAimSettings.Whitelist, "Silent WL")
 end})
 secRight:AddLabel({Text="Silent Whitelist — Remove:"})
 secRight:AddTextbox({Name="Remove",Placeholder="Exact name or prefix",Callback=function(name)
@@ -900,6 +1031,7 @@ secRight:AddSlider({Name="Trigger Predict Amount",Min=0.01,Max=0.5,Default=0.1,R
     Callback=function(v) TriggerSettings.PredictAmount=v end})
 
 
+
 local TabESP = Window:CreateTab("ESP")
 local secESPL = TabESP:AddSection("ESP","Left")
 secESPL:AddToggle({Name="Enable ESP",Default=false,Callback=function(v) ESPSettings.Enabled=v end})
@@ -923,6 +1055,14 @@ secESPL:AddColorPicker({Name="Name Color",Default=Color3.fromRGB(255,255,255),
 secESPL:AddToggle({Name="Distance",Default=false,Callback=function(v) ESPSettings.Distance=v end})
 secESPL:AddColorPicker({Name="Distance Color",Default=Color3.fromRGB(200,200,200),
     Callback=function(v) ESPSettings.DistanceColor=v end})
+secESPL:AddSeparator()
+secESPL:AddToggle({Name="Head Dot",Default=false,Callback=function(v) ESPSettings.HeadDot=v end})
+secESPL:AddColorPicker({Name="Head Dot Color",Default=Color3.fromRGB(255,255,255),
+    Callback=function(v) ESPSettings.HeadDotColor=v end})
+secESPL:AddSeparator()
+secESPL:AddToggle({Name="Weapon ESP",Default=false,Callback=function(v) ESPSettings.WeaponESP=v end})
+secESPL:AddColorPicker({Name="Weapon Color",Default=Color3.fromRGB(255,255,255),
+    Callback=function(v) ESPSettings.WeaponColor=v end})
 
 local secESPR = TabESP:AddSection("Visuals","Right")
 secESPR:AddToggle({Name="Tracers",Default=false,Callback=function(v) ESPSettings.Tracers=v end})
@@ -958,6 +1098,71 @@ secESPR:AddColorPicker({Name="Chams Color",Default=Color3.fromRGB(255,255,255),
     Callback=function(v) ESPSettings.ChamsColor=v end})
 secESPR:AddSlider({Name="Chams Trans",Min=0,Max=1,Default=0.5,Rounding=2,
     Callback=function(v) ESPSettings.ChamsTrans=v end})
+
+
+local secSelf = TabESP:AddSection("Self","Left")
+
+
+secSelf:AddToggle({Name="Self Chams",Default=false,Callback=function(v)
+    scEnabled=v; if v then scEnable() else scDisable() end
+end})
+secSelf:AddColorPicker({Name="SC Color",Default=Color3.fromRGB(255, 255, 255),
+    Callback=function(v) scColor=v; if scEnabled then scApply(LocalPlayer.Character) end end})
+secSelf:AddSlider({Name="SC Trans",Min=0,Max=1,Default=0,Rounding=2,
+    Callback=function(v) scTrans=v; if scEnabled and scEffect~="heat" then scApply(LocalPlayer.Character) end end})
+secSelf:AddSlider({Name="SC Reflectance",Min=0,Max=1,Default=0,Rounding=2,
+    Callback=function(v) scReflect=v; if scEnabled then scApply(LocalPlayer.Character) end end})
+secSelf:AddDropdown({Name="SC Material",Values={"Neon","Glass","ForceField","SmoothPlastic","Metal"},Default="ForceField",
+    Callback=function(v) scMat=v; if scEnabled then scApply(LocalPlayer.Character) end end})
+secSelf:AddDropdown({Name="SC Effect",Values={"none","heat"},Default="none",
+    Callback=function(v)
+        scEffect=v
+        if scEnabled then
+            if scEffect=="heat" then scStartHeat(LocalPlayer.Character)
+            else scStopHeat(); scApply(LocalPlayer.Character) end
+        end
+    end})
+secSelf:AddDropdown({Name="SC Particles",Values={"none","stars","specks"},Default="none",
+    Callback=function(v)
+        scParticles=v
+        if scEnabled then
+            scRemoveParticles(LocalPlayer.Character)
+            if scParticles=="stars" then scApplyStars(LocalPlayer.Character)
+            elseif scParticles=="specks" then scApplySpecks(LocalPlayer.Character) end
+        end
+    end})
+secSelf:AddColorPicker({Name="SC Particle Color",Default=Color3.fromRGB(255,255,255),
+    Callback=function(v)
+        scParticleColor=v
+        if scEnabled then
+            scRemoveParticles(LocalPlayer.Character)
+            if scParticles=="stars" then scApplyStars(LocalPlayer.Character)
+            elseif scParticles=="specks" then scApplySpecks(LocalPlayer.Character) end
+        end
+    end})
+
+local secLighting = TabESP:AddSection("Lighting","Right")
+secLighting:AddToggle({Name="Enable Lighting",Default=false,Callback=function(v)
+    LightingMods=v
+    if not v then
+        Lighting.Ambient=OrigLighting.Ambient; Lighting.OutdoorAmbient=OrigLighting.OutdoorAmbient
+        Lighting.FogStart=OrigLighting.FogStart; Lighting.FogEnd=OrigLighting.FogEnd
+        Lighting.FogColor=OrigLighting.FogColor; Lighting.Brightness=OrigLighting.Brightness
+    end
+end})
+secLighting:AddColorPicker({Name="Ambient",Default=Color3.fromRGB(0,0,0),
+    Callback=function(v) LightingMod.Ambient=v end})
+secLighting:AddColorPicker({Name="Outdoor Ambient",Default=Color3.fromRGB(80,120,200),
+    Callback=function(v) LightingMod.OutdoorAmbient=v end})
+secLighting:AddSlider({Name="Brightness",Min=0,Max=10,Default=2,Rounding=2,
+    Callback=function(v) LightingMod.Brightness=v end})
+secLighting:AddSlider({Name="Fog Start",Min=0,Max=5000,Default=50,Rounding=0,
+    Callback=function(v) LightingMod.FogStart=v end})
+secLighting:AddSlider({Name="Fog End",Min=0,Max=10000,Default=1000,Rounding=0,
+    Callback=function(v) LightingMod.FogEnd=v end})
+secLighting:AddColorPicker({Name="Fog Color",Default=Color3.fromRGB(80,120,200),
+    Callback=function(v) LightingMod.FogColor=v end})
+
 
 
 local TabMisc = Window:CreateTab("Misc")
@@ -1010,6 +1215,16 @@ UserInputService.InputBegan:Connect(function(inp, proc)
     end
 end)
 
+local secNoClip = TabMisc:AddSection("No Clip","Left")
+secNoClip:AddToggle({Name="No Clip",Default=false,Callback=function(v)
+    NoClipEnabled=v
+    if not v and LocalPlayer.Character then
+        for _, p in pairs(LocalPlayer.Character:GetChildren()) do
+            if p:IsA("BasePart") and p.Name~="HumanoidRootPart" then p.CanCollide=true end
+        end
+    end
+end})
+
 local secTP = TabMisc:AddSection("Teleport Player","Right")
 local _tpEnabled = false
 local _tpHolding = false
@@ -1043,18 +1258,20 @@ end)
 
 local secUtil = TabMisc:AddSection("Utility","Right")
 
-secUtil:AddLabel({Text="Menu key — keyboard only:"})
+secUtil:AddLabel({Text="Menu key — keyboard only, no default:"})
 local _menuBindObj = secUtil:AddMouseKeybind({
     Name    = "Menu Toggle Key",
     Default = {type="key", value=Enum.KeyCode.RightControl},
     Callback = function() end
 })
-secUtil:AddLabel({Text="Click above and press a KEY to set. Mouse buttons are NOT accepted."})
+secUtil:AddLabel({Text="Press a KEY to set. Mouse buttons are not accepted."})
 
 UserInputService.InputBegan:Connect(function(inp, proc)
     if proc then return end
     if inp.UserInputType ~= Enum.UserInputType.Keyboard then return end
-    if matchesMenuBind(inp, _menuBindObj.Value) then Window.ToggleWindow() end
+    if matchesMenuBind(inp, _menuBindObj.Value) then
+        Window.ToggleWindow()
+    end
 end)
 
 secUtil:AddSeparator()
@@ -1068,7 +1285,23 @@ secUtil:AddLabel({Text="Hides ESP/FOV drawings. Everything keeps working."})
 
 UserInputService.InputBegan:Connect(function(inp, proc)
     if proc then return end
-    if matchesBind(inp, _hideBindObj.Value) then _hidden=not _hidden end
+    if matchesBind(inp, _hideBindObj.Value) then
+        _hidden = not _hidden
+        if _hidden then
+            
+            if scEnabled then scDisable() end
+            
+            if LightingMods then
+                Lighting.Ambient=OrigLighting.Ambient; Lighting.OutdoorAmbient=OrigLighting.OutdoorAmbient
+                Lighting.FogStart=OrigLighting.FogStart; Lighting.FogEnd=OrigLighting.FogEnd
+                Lighting.FogColor=OrigLighting.FogColor; Lighting.Brightness=OrigLighting.Brightness
+            end
+        else
+            
+            if scEnabled then scEnable() end
+            
+        end
+    end
 end)
 
 secUtil:AddSeparator()
