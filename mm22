@@ -16,14 +16,28 @@ local ROLE_COLORS = {
     Innocent = Color3.fromRGB(60,  255, 110),
 }
 
+local playerData = {}
+
+game.ReplicatedStorage.Remotes.Gameplay.PlayerDataChanged.OnClientEvent:Connect(function(data)
+    playerData = data
+end)
+
 local function getRole(player)
+    if playerData then
+        for name, data in pairs(playerData) do
+            if name == player.Name then
+                if data.Role == "Murderer" then return "Murderer" end
+                if data.Role == "Sheriff"  then return "Sheriff"  end
+            end
+        end
+    end
     local char = player.Character
     local bp   = player:FindFirstChild("Backpack")
     local function has(name)
         return (char and char:FindFirstChild(name)) or (bp and bp:FindFirstChild(name))
     end
-    if has("Knife") then return "Murderer" end
-    if has("Gun") or has("Sheriff Gun") then return "Sheriff" end
+    if has("Knife")                        then return "Murderer" end
+    if has("Gun") or has("Sheriff Gun")    then return "Sheriff"  end
     return "Innocent"
 end
 
@@ -340,11 +354,9 @@ RunService.Heartbeat:Connect(function()
     local char = LocalPlayer.Character
     local hum  = char and char:FindFirstChildOfClass("Humanoid")
     if not hum then return end
-
     if SpeedSettings.Enabled and SpeedSettings.KeybindActive then
         hum.WalkSpeed = SpeedSettings.Value
     end
-
     if JumpSettings.Enabled and JumpSettings.KeybindActive then
         hum.UseJumpPower = true
         hum.JumpPower = JumpSettings.Value
@@ -438,7 +450,6 @@ local function shootMurderer()
     local char = LocalPlayer.Character
     if not char then return end
 
-    
     local gun = char:FindFirstChild("Gun") or char:FindFirstChild("Sheriff Gun")
     if not gun then
         local bp = LocalPlayer:FindFirstChild("Backpack")
@@ -467,18 +478,13 @@ local function shootMurderer()
     local predictedPos = getPredictedPosition(murderer) or murdererHRP.Position
     local myHand = char:FindFirstChild("RightHand") or char:FindFirstChild("HumanoidRootPart")
 
-    
     local shootRemote = gun:FindFirstChild("Shoot")
     if shootRemote then
-        shootRemote:FireServer(
-            CFrame.new(myHand.Position),
-            CFrame.new(predictedPos)
-        )
+        shootRemote:FireServer(CFrame.new(myHand.Position), CFrame.new(predictedPos))
         if Window then Window.Notify("Shoot","Fired at murderer!",2) end
         return
     end
 
-    
     local knifeLocal = gun:FindFirstChild("KnifeLocal")
     if knifeLocal then
         local createBeam = knifeLocal:FindFirstChild("CreateBeam")
@@ -521,7 +527,6 @@ local function killEveryone()
         return
     end
 
-    
     for _, plr in ipairs(Players:GetPlayers()) do
         if plr ~= LocalPlayer and plr.Character then
             local hrp = plr.Character:FindFirstChild("HumanoidRootPart")
@@ -532,7 +537,6 @@ local function killEveryone()
         end
     end
 
-    
     local stabRemote = knife:FindFirstChild("Stab")
     if stabRemote then
         stabRemote:FireServer("Slash")
@@ -916,6 +920,55 @@ LocalPlayer.CharacterAdded:Connect(function()
 end)
 
 
+
+
+
+local KillAuraSettings = {
+    Enabled = false,
+    Range   = 15,
+}
+local _killAuraConn = nil
+
+local function startKillAura()
+    if _killAuraConn then return end
+    _killAuraConn = RunService.Heartbeat:Connect(function()
+        if not KillAuraSettings.Enabled then return end
+        local char = LocalPlayer.Character
+        if not char then return end
+        local tool   = char:FindFirstChildOfClass("Tool")
+        local handle = tool and tool:FindFirstChild("Handle")
+        local hrp    = char:FindFirstChild("HumanoidRootPart")
+        if not (tool and handle and hrp) then return end
+
+        for _, plr in ipairs(Players:GetPlayers()) do
+            if plr ~= LocalPlayer and plr.Character then
+                local enemy = plr.Character
+                local eHRP  = enemy:FindFirstChild("HumanoidRootPart")
+                local eHum  = enemy:FindFirstChildOfClass("Humanoid")
+                if eHRP and eHum and eHum.Health > 0 then
+                    local dist = (hrp.Position - eHRP.Position).Magnitude
+                    local inRange = KillAuraSettings.Enabled and dist <= KillAuraSettings.Range
+                    if inRange then
+                        pcall(function() tool:Activate() end)
+                        for _, part in pairs(enemy:GetChildren()) do
+                            if part:IsA("BasePart") then
+                                pcall(function()
+                                    firetouchinterest(handle, part, 0)
+                                    firetouchinterest(handle, part, 1)
+                                end)
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end)
+end
+
+local function stopKillAura()
+    if _killAuraConn then _killAuraConn:Disconnect(); _killAuraConn = nil end
+end
+
 local Window = KraviX:CreateWindow({
     Name = "MM2",
     Url  = "discord.gg/fDdwWjz8yk",
@@ -948,15 +1001,12 @@ _aimBindObj = secAimbot:AddMouseKeybind({
 })
 secAimbot:AddLabel({Text="Key/button to activate aimbot."})
 
-
 secAimbotR:AddToggle({Name="Silent Aim (Murderer)",Default=false,Callback=function(v)
     _silentAimMurderer = v
 end})
 secAimbotR:AddLabel({Text="MB2 to throw knife at nearest player."})
 secAimbotR:AddSeparator()
-secAimbotR:AddButton({Name="Shoot Murderer",Callback=function()
-    shootMurderer()
-end})
+secAimbotR:AddButton({Name="Shoot Murderer",Callback=function() shootMurderer() end})
 local _shootBindObj = secAimbotR:AddMouseKeybind({
     Name="Shoot Key",Default={type="key",value=Enum.KeyCode.Unknown},Callback=function() end
 })
@@ -1037,9 +1087,10 @@ secViewR:AddButton({Name="View Nearest", Callback=function() startView(getNeares
 secViewR:AddButton({Name="Stop Viewing", Callback=function() stopView() end})
 
 
-local TabFling = Window:CreateTab("Fling")
-local secFling = TabFling:AddSection("Fling",    "Left")
-local secFlingR= TabFling:AddSection("Specific", "Right")
+
+local TabFling  = Window:CreateTab("Fling")
+local secFling  = TabFling:AddSection("Fling",    "Left")
+local secFlingR = TabFling:AddSection("Specific", "Right")
 
 secFling:AddButton({Name="Fling Murderer",Callback=function()
     local t=getMurderer(); if t then task.spawn(miniFling,t) else Window.Notify("Fling","No Murderer",3) end
@@ -1049,6 +1100,43 @@ secFling:AddButton({Name="Fling Sheriff",Callback=function()
 end})
 secFling:AddButton({Name="Fling Nearest",Callback=function()
     local t=getNearestPlayer(); if t then task.spawn(miniFling,t) else Window.Notify("Fling","No player",3) end
+end})
+secFling:AddSeparator()
+
+
+secFling:AddButton({Name="Fling All",Callback=function()
+    local myChar = LocalPlayer.Character
+    local myHum  = myChar and myChar:FindFirstChildOfClass("Humanoid")
+    if not (myChar and myHum and myHum.Health > 0) then
+        return
+    end
+    
+    local targets = {}
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LocalPlayer and plr.Character then
+            local h = plr.Character:FindFirstChildOfClass("Humanoid")
+            if h and h.Health > 0 then
+                table.insert(targets, plr)
+            end
+        end
+    end
+    if #targets == 0 then
+        Window.Notify("Fling All","No living players found.",2)
+        return
+    end
+    Window.Notify("Fling All","Flinging "..#targets.." player(s)...",3)
+    task.spawn(function()
+        for _, plr in ipairs(targets) do
+            if plr and plr.Character then
+                local h = plr.Character:FindFirstChildOfClass("Humanoid")
+                if h and h.Health > 0 then
+                    pcall(miniFling, plr)
+                    task.wait(0.5)
+                end
+            end
+        end
+        Window.Notify("Fling All","Done!",2)
+    end)
 end})
 
 secFlingR:AddButton({Name="Fling Selected",Callback=function()
@@ -1109,6 +1197,23 @@ secTPR:AddButton({Name="Teleport to Lobby",Callback=function()
 end})
 
 
+
+
+
+local TabKA   = Window:CreateTab("Kill Aura")
+local secKAL  = TabKA:AddSection("Kill Aura", "Left")
+
+secKAL:AddToggle({Name="Enable Kill Aura",Default=false,Callback=function(v)
+    KillAuraSettings.Enabled = v
+    if v then startKillAura() else stopKillAura() end
+end})
+secKAL:AddSlider({Name="Range",Min=1,Max=200,Default=15,Rounding=0,Callback=function(v)
+    KillAuraSettings.Range = v
+end})
+secKAL:AddLabel({Text="Kill Aura hits players within range using the equipped tool."})
+
+
+
 local function rebuildPlayerDropdowns()
     local names = getPlayerNames()
     if _viewDropdown then
@@ -1145,12 +1250,12 @@ Players.PlayerAdded:Connect(function() task.wait(1); rebuildPlayerDropdowns() en
 Players.PlayerRemoving:Connect(function() task.wait(0.5); rebuildPlayerDropdowns() end)
 
 
+
 local TabMisc  = Window:CreateTab("Misc")
 local secMiscL = TabMisc:AddSection("Player",  "Left")
 local secMiscR = TabMisc:AddSection("Utility", "Right")
 
 local _speedBindObj, _jumpBindObj, _flyBindObj, _menuBindObj, _hideBindObj, _unloadBindObj
-
 
 _speedBindObj = secMiscL:AddMouseKeybind({
     Name="WalkSpeed Key",Default={type="key",value=Enum.KeyCode.Unknown},Callback=function() end
@@ -1168,7 +1273,6 @@ secMiscL:AddSlider({Name="WalkSpeed Amount",Min=16,Max=100,Default=16,Rounding=0
     Callback=function(v) SpeedSettings.Value=v end})
 secMiscL:AddSeparator()
 
-
 _jumpBindObj = secMiscL:AddMouseKeybind({
     Name="JumpPower Key",Default={type="key",value=Enum.KeyCode.Unknown},Callback=function() end
 })
@@ -1185,7 +1289,6 @@ secMiscL:AddSlider({Name="JumpPower Amount",Min=50,Max=500,Default=50,Rounding=0
     Callback=function(v) JumpSettings.Value=v end})
 secMiscL:AddSeparator()
 
-
 _flyBindObj = secMiscL:AddMouseKeybind({
     Name="Fly Toggle Key",Default={type="key",value=Enum.KeyCode.Unknown},Callback=function() end
 })
@@ -1197,7 +1300,6 @@ end})
 secMiscL:AddSlider({Name="Fly Speed",Min=10,Max=100,Default=50,Rounding=0,
     Callback=function(v) FlySettings.Speed=v end})
 secMiscL:AddSeparator()
-
 
 local _noclipEnabled = false
 secMiscL:AddToggle({Name="NoClip",Default=false,Callback=function(v)
@@ -1220,20 +1322,17 @@ RunService.Heartbeat:Connect(function()
     end
 end)
 
-
 secMiscR:AddToggle({Name="Auto Grab Gun",Default=false,Callback=function(v)
     _autoGrabGunEnabled=v; if v then startAutoGrabGun() end
 end})
 secMiscR:AddButton({Name="Grab Gun (Manual)",Callback=function() grabGun() end})
 secMiscR:AddSeparator()
 
-
 local _invisBindObj = secMiscR:AddMouseKeybind({
     Name="Invisible Key",Default={type="key",value=Enum.KeyCode.Unknown},Callback=function() end
 })
 secMiscR:AddToggle({Name="Invisible",Default=false,Callback=function(v) setInvisible(v) end})
 secMiscR:AddSeparator()
-
 
 local _antiCollisionConn = nil
 secMiscR:AddToggle({Name="Anti Collision Players",Default=false,Callback=function(v)
@@ -1255,11 +1354,38 @@ end})
 secMiscR:AddLabel({Text="Removes collision with other players."})
 secMiscR:AddSeparator()
 
-
 secMiscR:AddButton({Name="Kill Everyone (Murderer)",Callback=function()
     killEveryone()
 end})
 secMiscR:AddLabel({Text="Warning: high report risk!"})
+secMiscR:AddSeparator()
+
+
+secMiscR:AddButton({Name="God Mode",Callback=function()
+    local char = LocalPlayer.Character
+    local hum  = char and char:FindFirstChildOfClass("Humanoid")
+    if not (char and hum) then
+        return
+    end
+    local camPos = workspace.CurrentCamera.CFrame
+    local nHum = hum:Clone()
+    nHum.Parent = char
+    LocalPlayer.Character = nil
+    nHum:SetStateEnabled(Enum.HumanoidStateType.Dead, false)
+    nHum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
+    nHum:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false)
+    nHum.BreakJointsOnDeath = true
+    hum:Destroy()
+    LocalPlayer.Character = char
+    workspace.CurrentCamera.CameraSubject = nHum
+    workspace.CurrentCamera.CFrame = camPos
+    nHum.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
+    nHum.Health = nHum.MaxHealth
+    local anim = char:FindFirstChild("Animate")
+    if anim then anim.Disabled = true; task.wait(); anim.Disabled = false end
+    Window.Notify("God Mode","Active!",3)
+end})
+secMiscR:AddLabel({Text="God Mode: makes your character immortal."})
 secMiscR:AddSeparator()
 
 _menuBindObj = secMiscR:AddMouseKeybind({
@@ -1289,17 +1415,14 @@ end})
 UserInputService.InputBegan:Connect(function(inp, proc)
     if proc then return end
 
-    
     if _invisBindObj and matchesBind(inp, _invisBindObj.Value) then
         setInvisible(not _invisEnabled)
     end
 
-   
     if _shootBindObj and matchesBind(inp, _shootBindObj.Value) then
         shootMurderer()
     end
 
-    
     if SpeedSettings.Enabled and _speedBindObj and matchesBind(inp, _speedBindObj.Value) then
         SpeedSettings.KeybindActive = not SpeedSettings.KeybindActive
         if not SpeedSettings.KeybindActive then
@@ -1309,7 +1432,6 @@ UserInputService.InputBegan:Connect(function(inp, proc)
         end
     end
 
-    
     if JumpSettings.Enabled and _jumpBindObj and matchesBind(inp, _jumpBindObj.Value) then
         JumpSettings.KeybindActive = not JumpSettings.KeybindActive
         if not JumpSettings.KeybindActive then
@@ -1319,13 +1441,11 @@ UserInputService.InputBegan:Connect(function(inp, proc)
         end
     end
 
-    
     if FlySettings.Enabled and _flyBindObj and matchesBind(inp, _flyBindObj.Value) then
         FlySettings.Toggled = not FlySettings.Toggled
         if FlySettings.Toggled then startFly() else stopFly() end
     end
 
-    
     if inp.UserInputType == Enum.UserInputType.Keyboard and _menuBindObj then
         local bind = _menuBindObj.Value
         if bind and bind.type=="key" and bind.value~=Enum.KeyCode.Unknown and inp.KeyCode==bind.value then
@@ -1333,7 +1453,6 @@ UserInputService.InputBegan:Connect(function(inp, proc)
         end
     end
 
-    
     if _hideBindObj and matchesBind(inp, _hideBindObj.Value) then
         _hidden = not _hidden
         if _hidden then
@@ -1342,7 +1461,6 @@ UserInputService.InputBegan:Connect(function(inp, proc)
         end
     end
 
-    
     if _unloadBindObj and matchesBind(inp, _unloadBindObj.Value) then
         AimbotSettings.Enabled=false; _aimState=false; AimbotSettings.StickyTarget=nil
         SpeedSettings.Enabled=false; SpeedSettings.KeybindActive=false
@@ -1351,6 +1469,7 @@ UserInputService.InputBegan:Connect(function(inp, proc)
         _noclipEnabled=false; _autoGrabGunEnabled=false
         _gunEspEnabled=false; _touchFlingEnabled=false; _hidden=false
         _silentAimMurderer=false
+        KillAuraSettings.Enabled=false; stopKillAura()
         if _antiCollisionConn then _antiCollisionConn:Disconnect(); _antiCollisionConn=nil end
         if _invisEnabled then setInvisible(false) end
         toggleAntiFling(false)
