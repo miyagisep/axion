@@ -8,7 +8,8 @@ local UserInputService = game:GetService("UserInputService")
 local TeleportService  = game:GetService("TeleportService")
 local LocalPlayer      = Players.LocalPlayer
 local Camera           = workspace.CurrentCamera
-
+local TweenService     = game:GetService("TweenService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local ROLE_COLORS = {
     Murderer = Color3.fromRGB(255, 60,  60),
@@ -920,9 +921,6 @@ LocalPlayer.CharacterAdded:Connect(function()
 end)
 
 
-
-
-
 local KillAuraSettings = {
     Enabled = false,
     Range   = 15,
@@ -968,6 +966,223 @@ end
 local function stopKillAura()
     if _killAuraConn then _killAuraConn:Disconnect(); _killAuraConn = nil end
 end
+
+
+
+local _farmEnabled = false
+local _farmAllCoinsCollected = false
+local _farmNoclipConn = nil
+local _farmTween = nil
+local _farmPartsState = {}
+local _farmActive = false
+
+local function returncoincontainer()
+    for _, model in pairs(workspace:GetChildren()) do
+        if model:FindFirstChild('CoinContainer') and model:IsA('Model') then
+            return model:FindFirstChild('CoinContainer')
+        end
+    end
+    return nil
+end
+
+local function FindNearestCoin(container)
+    if not container then return nil, math.huge end
+    local nearest, bestDist = nil, math.huge
+    for _, coin in pairs(container:GetChildren()) do
+        if coin:GetAttribute('CoinID') == 'Coin' and coin:FindFirstChild('TouchInterest') and coin.Transparency == 1 then
+            if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild('HumanoidRootPart') then
+                local dist = (LocalPlayer.Character.HumanoidRootPart.Position - coin.Position).Magnitude
+                if dist < bestDist then
+                    nearest = coin
+                    bestDist = dist
+                end
+            end
+        end
+    end
+    return nearest, bestDist
+end
+
+local function startFarm()
+    if not LocalPlayer.Character or not LocalPlayer.Character:FindFirstChild('HumanoidRootPart') then return end
+    if LocalPlayer:GetAttribute('Alive') ~= true then return end
+
+    local hrp = LocalPlayer.Character.HumanoidRootPart
+    local hum = LocalPlayer.Character:FindFirstChild('Humanoid')
+
+    _farmPartsState = {}
+    for _, part in pairs(LocalPlayer.Character:GetDescendants()) do
+        if part:IsA('BasePart') then
+            _farmPartsState[part] = {
+                CanCollide = part.CanCollide,
+                Massless = part.Massless,
+            }
+        end
+    end
+
+    hrp.CFrame = hrp.CFrame - Vector3.new(0, 2.5, 0)
+    hrp.CFrame = hrp.CFrame * CFrame.Angles(math.rad(90), 0, 0)
+    if hum then
+        hum.PlatformStand = true
+        hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
+        hum:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false)
+    end
+    _farmActive = true
+end
+
+local function stopFarm()
+    _farmActive = false
+    if _farmTween then
+        _farmTween:Cancel()
+        _farmTween = nil
+    end
+    if _farmNoclipConn then
+        _farmNoclipConn:Disconnect()
+        _farmNoclipConn = nil
+    end
+    if LocalPlayer.Character then
+        for part, props in pairs(_farmPartsState) do
+            if part and part.Parent then
+                part.CanCollide = props.CanCollide
+                part.Massless = props.Massless
+            end
+        end
+        local hrp = LocalPlayer.Character:FindFirstChild('HumanoidRootPart')
+        if hrp then
+            hrp.Velocity = Vector3.new(0, 0, 0)
+            hrp.RotVelocity = Vector3.new(0, 0, 0)
+            hrp.CFrame = hrp.CFrame * CFrame.Angles(math.rad(-90), 0, 0)
+            hrp.CFrame = hrp.CFrame + Vector3.new(0, 2.5, 0)
+        end
+        local hum = LocalPlayer.Character:FindFirstChild('Humanoid')
+        if hum then
+            hum.PlatformStand = false
+            hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, true)
+            hum:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, true)
+        end
+    end
+    _farmPartsState = {}
+end
+
+local function resetCharacter()
+    if LocalPlayer.Character then
+        local hum = LocalPlayer.Character:FindFirstChildOfClass('Humanoid')
+        if hum then
+            hum.Health = 0  
+        end
+    end
+end
+
+
+local coinCollectedEvent = ReplicatedStorage.Remotes.Gameplay.CoinCollected
+local roundStartEvent = ReplicatedStorage.Remotes.Gameplay.RoundStart
+local roundEndFadeEvent = ReplicatedStorage.Remotes.Gameplay.RoundEndFade
+
+coinCollectedEvent.OnClientEvent:Connect(function(coinId, collected, total)
+    if collected == total then
+        _farmAllCoinsCollected = true
+        if _farmActive then
+            stopFarm()
+            resetCharacter()  
+        end
+    else
+        _farmAllCoinsCollected = false
+    end
+end)
+
+roundStartEvent.OnClientEvent:Connect(function()
+    _farmAllCoinsCollected = false
+end)
+roundEndFadeEvent.OnClientEvent:Connect(function()
+    _farmAllCoinsCollected = false
+    if _farmActive then
+        stopFarm()
+    end
+end)
+
+
+task.spawn(function()
+    while true do
+        RunService.Heartbeat:Wait()
+        if _farmEnabled and not _farmAllCoinsCollected and LocalPlayer:GetAttribute('Alive') == true
+            and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild('HumanoidRootPart') then
+            local container = returncoincontainer()
+            if container then
+                local nearest, dist = FindNearestCoin(container)
+                if nearest and nearest.Transparency == 1 and not _farmAllCoinsCollected then
+                    if not _farmActive then
+                        startFarm()
+                    end
+                    local hrp = LocalPlayer.Character.HumanoidRootPart
+                    local hum = LocalPlayer.Character:FindFirstChild('Humanoid')
+                    hrp.Velocity = Vector3.zero
+                    hrp.RotVelocity = Vector3.zero
+                    local targetPos = nearest.Position - Vector3.new(0, 2.5, 0)
+                    local targetCFrame = CFrame.new(targetPos) * CFrame.Angles(math.rad(90), 0, 0)
+
+                    
+                    if not _farmNoclipConn then
+                        _farmNoclipConn = RunService.Stepped:Connect(function()
+                            if _farmEnabled and LocalPlayer.Character then
+                                for _, part in ipairs(LocalPlayer.Character:GetDescendants()) do
+                                    if part:IsA('BasePart') then part.CanCollide = false end
+                                end
+                            end
+                        end)
+                    end
+
+                    local tweenInfo = TweenInfo.new(dist / 23, Enum.EasingStyle.Linear, Enum.EasingDirection.Out)
+                    _farmTween = TweenService:Create(hrp, tweenInfo, {CFrame = targetCFrame})
+                    _farmTween:Play()
+
+                    local velocityFixConn
+                    velocityFixConn = RunService.Heartbeat:Connect(function()
+                        if _farmEnabled and LocalPlayer:GetAttribute('Alive') == true and hrp then
+                            hrp.Velocity = Vector3.zero
+                            hrp.RotVelocity = Vector3.zero
+                            if hum then hum.PlatformStand = true end
+                        else
+                            if velocityFixConn then velocityFixConn:Disconnect() end
+                        end
+                    end)
+
+                    
+                    while nearest and nearest:FindFirstChild('TouchInterest') and nearest.Transparency == 1
+                        and not _farmAllCoinsCollected and _farmEnabled and LocalPlayer:GetAttribute('Alive') == true do
+                        if hrp and nearest then
+                            local currentDist = (hrp.Position - nearest.Position).Magnitude
+                            if currentDist <= 5 then  
+                                firetouchinterest(hrp, nearest, 0)
+                                firetouchinterest(hrp, nearest, 1)
+                            end
+                        end
+                        RunService.Heartbeat:Wait()
+                    end
+
+                    if velocityFixConn then velocityFixConn:Disconnect() end
+                    if _farmTween then _farmTween:Cancel() end
+                    if hrp then
+                        hrp.Velocity = Vector3.zero
+                        hrp.RotVelocity = Vector3.zero
+                    end
+                else
+                    if _farmActive then
+                        stopFarm()
+                    end
+                end
+            else
+                if _farmActive then
+                    stopFarm()
+                end
+            end
+        else
+            if _farmActive then
+                stopFarm()
+            end
+        end
+    end
+end)
+
+
 
 local Window = KraviX:CreateWindow({
     Name = "MM2",
@@ -1197,9 +1412,6 @@ secTPR:AddButton({Name="Teleport to Lobby",Callback=function()
 end})
 
 
-
-
-
 local TabKA   = Window:CreateTab("Kill Aura")
 local secKAL  = TabKA:AddSection("Kill Aura", "Left")
 
@@ -1211,7 +1423,6 @@ secKAL:AddSlider({Name="Range",Min=1,Max=200,Default=15,Rounding=0,Callback=func
     KillAuraSettings.Range = v
 end})
 secKAL:AddLabel({Text="Kill Aura hits players within range using the equipped tool."})
-
 
 
 local function rebuildPlayerDropdowns()
@@ -1249,6 +1460,16 @@ rebuildPlayerDropdowns()
 Players.PlayerAdded:Connect(function() task.wait(1); rebuildPlayerDropdowns() end)
 Players.PlayerRemoving:Connect(function() task.wait(0.5); rebuildPlayerDropdowns() end)
 
+
+local TabFarm = Window:CreateTab("Auto Farm")
+local secFarm = TabFarm:AddSection("Coin Farm", "Left")
+
+secFarm:AddToggle({Name="Farm Coins", Default=false, Callback=function(v)
+    _farmEnabled = v
+    if not v then
+        if _farmActive then stopFarm() end
+    end
+end})
 
 
 local TabMisc  = Window:CreateTab("Misc")
@@ -1473,6 +1694,7 @@ UserInputService.InputBegan:Connect(function(inp, proc)
         if _antiCollisionConn then _antiCollisionConn:Disconnect(); _antiCollisionConn=nil end
         if _invisEnabled then setInvisible(false) end
         toggleAntiFling(false)
+        _farmEnabled = false; if _farmActive then stopFarm() end
         local char=LocalPlayer.Character
         local hum=char and char:FindFirstChildOfClass("Humanoid")
         if hum then hum.WalkSpeed=16; hum.JumpPower=50; hum.PlatformStand=false end
@@ -1489,7 +1711,7 @@ UserInputService.InputBegan:Connect(function(inp, proc)
         if _gunDrawings.label then pcall(function() _gunDrawings.label:Remove() end) end
         if _gunDrawings.dot   then pcall(function() _gunDrawings.dot:Remove()   end) end
         _gunDrawings={}
-        pcall(function() if espFolder and espFolder.Parent then espFolder:Destroy() end end)
+        if espFolder and espFolder.Parent then pcall(function() espFolder:Destroy() end) end
         AimbotCircle.Visible=false
         task.wait(0.1)
         if Window._ScreenGui and Window._ScreenGui.Parent then
